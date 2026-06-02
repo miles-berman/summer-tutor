@@ -58,13 +58,10 @@ Change one color code and watch the whole page change. Try it!
 
 **Key idea:** change the color in *one* place (`--accent`), and every heading and line that uses it updates at once.
 
-## 4. Hand it in
+## 4. Finished
 
 - Click **Download this site**
 - A file lands in your Downloads
-- Send that file to your teacher — done!
-
-**Gotcha:** your work only lives in *this* browser on *this* computer. If you switch computers it won't follow you — so click **Download** when you're finished.
 
 ## Cheatsheet
 
