@@ -1,1 +1,1 @@
-https://github.com/miles-berman/summer-tutor/deployments/github-pages
+https://miles-berman.github.io/summer-tutor/
