@@ -1,6 +1,6 @@
 ## Getting started
 
-- Open the link your teacher gives you
+- Open the link 
 - Type a name for your website (this becomes your folder name)
 - You'll see two tabs — `index.html` and `styles.css` — and a live preview on the right
 
