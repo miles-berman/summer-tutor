@@ -58,6 +58,8 @@
   }
   select { font-weight: 700; max-width: 220px; }
   button { font-weight: 700; border: none; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button:disabled:active { transform: none; }
   button:active { transform: translateY(1px); }
   .btn-primary  { background: var(--accent);  color: #fff; }
   .btn-second   { background: var(--accent2); color: #fff; }
@@ -191,6 +193,8 @@
   <div class="logo">Website <span>Maker</span></div>
   <select id="siteSelect" title="Switch website"></select>
   <button class="btn-ghost" id="newBtn">+ New</button>
+  <button class="btn-ghost" id="undoBtn" title="Undo (Ctrl+Z)">&#8630; Undo</button>
+  <button class="btn-ghost" id="redoBtn" title="Redo (Ctrl+Y)">&#8631; Redo</button>
   <div class="spacer"></div>
   <button class="btn-second" id="downloadBtn">Download this site</button>
   <button class="btn-ghost" id="downloadAllBtn">Download all</button>
@@ -215,8 +219,9 @@
 </main>
 
 <div class="help">
-  Your work saves automatically in this browser. When you're done, click
-  <strong>Download this site</strong> and send the file to your teacher.
+  Your work saves automatically in this browser. <strong>Tab</strong> indents,
+  <strong>Shift+Tab</strong> un-indents, and typing <code>&gt;</code> after a tag closes it for you.
+  When you're done, click <strong>Download this site</strong> and send the file to your teacher.
 </div>
 
 <!-- naming modal -->
@@ -240,73 +245,75 @@
    ========================================================= */
 
 // ---- starter content for a brand-new site ----
-const STARTER_HTML =
-`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>My Website</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
+const STARTER_HTML = [
+  "<!DOCTYPE html>",
+  "<html lang=\"en\">",
+  "<head>",
+  "  <meta charset=\"UTF-8\" />",
+  "  <title>My Website<\/title>",
+  "  <link rel=\"stylesheet\" href=\"styles.css\" />",
+  "<\/head>",
+  "<body>",
+  "",
+  "  <header>",
+  "    <h1>Hi, I'm Your Name<\/h1>",
+  "    <p class=\"tagline\">I make cool stuff on the internet.<\/p>",
+  "  <\/header>",
+  "",
+  "  <main>",
+  "    <section>",
+  "      <h2>About Me<\/h2>",
+  "      <p>Write a sentence or two about yourself here.<\/p>",
+  "    <\/section>",
+  "",
+  "    <section>",
+  "      <h2>Things I Like<\/h2>",
+  "      <ul>",
+  "        <li>Video games<\/li>",
+  "        <li>Drawing<\/li>",
+  "        <li>Building websites<\/li>",
+  "      <\/ul>",
+  "    <\/section>",
+  "  <\/main>",
+  "",
+  "  <footer>",
+  "    <p>Made by Your Name<\/p>",
+  "  <\/footer>",
+  "",
+  "<\/body>",
+  "<\/html>",
+  ""
+].join("\n");
 
-  <header>
-    <h1>Hi, I'm Your Name</h1>
-    <p class="tagline">I make cool stuff on the internet.</p>
-  </header>
-
-  <main>
-    <section>
-      <h2>About Me</h2>
-      <p>Write a sentence or two about yourself here.</p>
-    </section>
-
-    <section>
-      <h2>Things I Like</h2>
-      <ul>
-        <li>Video games</li>
-        <li>Drawing</li>
-        <li>Building websites</li>
-      </ul>
-    </section>
-  </main>
-
-  <footer>
-    <p>Made by Your Name</p>
-  </footer>
-
-</body>
-</html>
-`;
-
-const STARTER_CSS =
-`/* Change these colors and watch the whole page change! */
-:root {
-  --bg: #fdf6e3;
-  --text: #333;
-  --accent: #e85d75;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: system-ui, sans-serif;
-  line-height: 1.6;
-}
-
-header, main, footer {
-  max-width: 700px;
-  margin: 0 auto;
-  padding: 0 20px;
-}
-
-header { text-align: center; padding-top: 50px; }
-h1 { color: var(--accent); font-size: 2.5rem; margin-bottom: 0; }
-.tagline { font-size: 1.2rem; opacity: 0.8; }
-h2 { color: var(--accent); border-bottom: 3px solid var(--accent); padding-bottom: 6px; }
-footer { text-align: center; padding: 40px 0; opacity: 0.6; }
-`;
+const STARTER_CSS = [
+  "/* Change these colors and watch the whole page change! */",
+  ":root {",
+  "  --bg: #fdf6e3;",
+  "  --text: #333;",
+  "  --accent: #e85d75;",
+  "}",
+  "",
+  "body {",
+  "  margin: 0;",
+  "  background: var(--bg);",
+  "  color: var(--text);",
+  "  font-family: system-ui, sans-serif;",
+  "  line-height: 1.6;",
+  "}",
+  "",
+  "header, main, footer {",
+  "  max-width: 700px;",
+  "  margin: 0 auto;",
+  "  padding: 0 20px;",
+  "}",
+  "",
+  "header { text-align: center; padding-top: 50px; }",
+  "h1 { color: var(--accent); font-size: 2.5rem; margin-bottom: 0; }",
+  ".tagline { font-size: 1.2rem; opacity: 0.8; }",
+  "h2 { color: var(--accent); border-bottom: 3px solid var(--accent); padding-bottom: 6px; }",
+  "footer { text-align: center; padding: 40px 0; opacity: 0.6; }",
+  ""
+].join("\n");
 
 // ---- storage (falls back to memory if localStorage is blocked) ----
 const mem = {};
@@ -391,7 +398,7 @@ function downloadBytes(filename, bytes){
 
 // ---- preview: inject the CSS into the HTML, render in sandboxed iframe ----
 function buildPreview(html, css){
-  const styleTag = "<style>\n" + css + "\n</style>";
+  const styleTag = "<style>\n" + css + "\n<\/style>";
   if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, styleTag + "</head>");
   if (/<body[^>]*>/i.test(html)) return html.replace(/(<body[^>]*>)/i, "$1" + styleTag);
   return styleTag + html;
@@ -431,6 +438,8 @@ function loadSite(slug){
   store.set(ACTIVE, slug);
   el.html.value = site.html;
   el.css.value = site.css;
+  hist.html.reset();
+  hist.css.reset();
   refreshSiteList();
   updatePreview();
   setStatus("All changes saved");
@@ -464,18 +473,275 @@ function onCodeInput(){ scheduleSave(); updatePreview(); }
 el.html.addEventListener("input", onCodeInput);
 el.css.addEventListener("input", onCodeInput);
 
-// Tab key inserts two spaces instead of leaving the editor
-function tabHandler(e){
-  if (e.key === "Tab"){
-    e.preventDefault();
-    const t = e.target, s = t.selectionStart, en = t.selectionEnd;
-    t.value = t.value.slice(0, s) + "  " + t.value.slice(en);
-    t.selectionStart = t.selectionEnd = s + 2;
-    onCodeInput();
+/* =========================================================
+   Smart editing
+   - Tab / Shift+Tab: indent & dedent, snapped to a 2-space
+     grid. Works on single carets and multi-line selections.
+   - Enter: keeps the current indentation; goes one level
+     deeper after an opening tag or "{", and expands empty
+     blocks (>|</  and  {|}) onto three neat lines.
+   - Backspace: deletes indentation back to the previous tab
+     stop, and removes empty pairs like "" or {} in one press.
+   - Auto-close: typing ">" after any opening tag inserts the
+     matching closing tag (generic — works for every tag, void
+     elements like <br> and <img> are skipped). "{", "(", "[",
+     quotes auto-pair, typing the closer skips over an existing
+     one, and typing "=" inside a tag gives you ="" ready to fill.
+   - Undo / Redo: a custom per-file history (Ctrl+Z / Ctrl+Y
+     or the header buttons). Typing groups into one step;
+     each smart edit is its own step.
+   ========================================================= */
+const INDENT = "  ";
+const VOID_TAGS = new Set(["area","base","br","col","embed","hr","img","input",
+                           "link","meta","param","source","track","wbr"]);
+const PAIRS = { "{": "}", "(": ")", "[": "]", '"': '"', "'": "'" };
+const CLOSERS = new Set(["}", ")", "]", '"', "'"]);
+
+// ---- undo/redo history (one per file) ----
+function makeHistory(t){
+  const MAX = 200;
+  let stack = [{ v: t.value, s: 0, e: 0 }];
+  let idx = 0, timer = null;
+
+  const snap = () => ({ v: t.value, s: t.selectionStart, e: t.selectionEnd });
+
+  function commitNow(){
+    clearTimeout(timer); timer = null;
+    if (t.value === stack[idx].v) return;
+    stack = stack.slice(0, idx + 1);     // typing after an undo clears the redo trail
+    stack.push(snap());
+    if (stack.length > MAX) stack.shift();
+    idx = stack.length - 1;
+    updateUndoButtons();
   }
+  // group rapid typing into a single undo step
+  function commitSoon(){
+    clearTimeout(timer);
+    timer = setTimeout(commitNow, 350);
+    updateUndoButtons();
+  }
+  function restore(st){
+    t.value = st.v;
+    t.focus();
+    t.setSelectionRange(st.s, st.e);
+    onCodeInput();
+    updateUndoButtons();
+  }
+  function undo(){
+    commitNow();                          // flush in-flight typing first
+    if (idx === 0) return;
+    idx--;
+    restore(stack[idx]);
+  }
+  function redo(){
+    if (t.value !== stack[idx].v){ commitNow(); return; } // pending edits invalidate redo
+    if (idx >= stack.length - 1) return;
+    idx++;
+    restore(stack[idx]);
+  }
+  function reset(){
+    clearTimeout(timer); timer = null;
+    stack = [{ v: t.value, s: 0, e: 0 }];
+    idx = 0;
+    updateUndoButtons();
+  }
+  return {
+    commitNow, commitSoon, undo, redo, reset,
+    canUndo: () => idx > 0 || t.value !== stack[idx].v,
+    canRedo: () => idx < stack.length - 1 && t.value === stack[idx].v,
+  };
 }
-el.html.addEventListener("keydown", tabHandler);
-el.css.addEventListener("keydown", tabHandler);
+
+// Single edit primitive. Flushes pending typing first so every
+// smart edit lands as exactly one undo step.
+function applyEdit(t, start, end, text, caret, caretEnd){
+  const h = histFor(t);
+  h.commitNow();
+  t.focus();
+  t.setRangeText(text, start, end, "end");
+  if (caret != null) t.setSelectionRange(caret, caretEnd != null ? caretEnd : caret);
+  onCodeInput();   // setRangeText doesn't fire "input"
+  h.commitNow();
+}
+
+function installSmartEditor(t, mode){
+  const lineStartAt = pos => t.value.lastIndexOf("\n", pos - 1) + 1;
+  const lineIndentAt = pos => t.value.slice(lineStartAt(pos)).match(/^ */)[0];
+
+  t.addEventListener("keydown", e => {
+    // undo / redo — ours replaces the browser's (setRangeText breaks native undo)
+    if ((e.ctrlKey || e.metaKey) && !e.altKey){
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey){ e.preventDefault(); histFor(t).undo(); return; }
+      if (key === "y" || (key === "z" && e.shiftKey)){ e.preventDefault(); histFor(t).redo(); return; }
+      return;
+    }
+    if (e.altKey) return;
+    const v = t.value, s = t.selectionStart, en = t.selectionEnd;
+    const hasSel = s !== en;
+    const before = v.slice(0, s), after = v.slice(en);
+    const prev = before.slice(-1), next = after.charAt(0);
+    const k = e.key;
+
+    // ---- Tab / Shift+Tab: indent & dedent, snapped to the grid ----
+    if (k === "Tab"){
+      e.preventDefault();
+      const spansLines = v.slice(s, en).includes("\n");
+      if (e.shiftKey || spansLines){
+        // line-wise: from start of first line to end of last selected line
+        const ls = lineStartAt(s);
+        // if the selection ends right after a newline, don't drag in the next line
+        const enAdj = (hasSel && en > s && v[en - 1] === "\n") ? en - 1 : en;
+        const nl = v.indexOf("\n", enAdj);
+        const le = nl === -1 ? v.length : nl;
+        const lines = v.slice(ls, le).split("\n");
+        const out = e.shiftKey
+          ? lines.map(l => l.replace(/^ {1,2}/, "")).join("\n")   // dedent one stop
+          : lines.map(l => l.length ? INDENT + l : l).join("\n"); // indent one stop
+        applyEdit(t, ls, le, out, ls, ls + out.length);
+      } else {
+        // single caret: insert just enough spaces to reach the next tab stop
+        const col = s - lineStartAt(s);
+        applyEdit(t, s, en, " ".repeat(INDENT.length - (col % INDENT.length)));
+      }
+      return;
+    }
+
+    // ---- Enter: auto-indent + block expansion ----
+    if (k === "Enter" && !hasSel){
+      const indent = lineIndentAt(s);
+      const expandHTML = mode === "html" && prev === ">" && after.startsWith("<\/");
+      const expandCSS  = mode === "css"  && prev === "{" && next === "}";
+      if (expandHTML || expandCSS){
+        // <h1>|</h1>  or  h1 {|}  →  open it up onto three lines
+        e.preventDefault();
+        const ins = "\n" + indent + INDENT + "\n" + indent;
+        applyEdit(t, s, en, ins, s + 1 + indent.length + INDENT.length);
+        return;
+      }
+      let extra = "";
+      if (mode === "css" && prev === "{") extra = INDENT;
+      if (mode === "html"){
+        const m = before.match(/<([a-zA-Z][a-zA-Z0-9-]*)(\s[^<>]*)?>$/);
+        if (m && !VOID_TAGS.has(m[1].toLowerCase()) && !before.endsWith("/>")) extra = INDENT;
+      }
+      e.preventDefault();
+      applyEdit(t, s, en, "\n" + indent + extra);
+      return;
+    }
+
+    // ---- Backspace: snap-delete indentation, remove empty pairs ----
+    if (k === "Backspace" && !hasSel){
+      if (prev && PAIRS[prev] === next){
+        e.preventDefault();
+        applyEdit(t, s - 1, s + 1, "");
+        return;
+      }
+      const ls = lineStartAt(s);
+      if (s > ls && /^ +$/.test(v.slice(ls, s))){
+        const col = s - ls;
+        const del = col % INDENT.length || INDENT.length;
+        e.preventDefault();
+        applyEdit(t, s - del, s, "");
+        return;
+      }
+      return;
+    }
+
+    if (k.length !== 1) return;
+
+    // ---- typing a closer that's already there: just step over it ----
+    if (!hasSel && CLOSERS.has(k) && next === k){
+      e.preventDefault();
+      t.setSelectionRange(s + 1, s + 1);
+      return;
+    }
+
+    // ---- ">" closes the tag you just opened (generic, any tag) ----
+    if (mode === "html" && k === ">" && !hasSel){
+      const lt = before.lastIndexOf("<");
+      if (lt !== -1){
+        const frag = before.slice(lt);
+        const m = frag.match(/^<([a-zA-Z][a-zA-Z0-9-]*)(\s[^<>]*)?$/);
+        if (m && !VOID_TAGS.has(m[1].toLowerCase()) && !frag.endsWith("/")){
+          e.preventDefault();
+          applyEdit(t, s, en, "><\/" + m[1] + ">", s + 1);
+          return;
+        }
+      }
+    }
+
+    // ---- "=" inside a tag gives href="" with the cursor ready ----
+    if (mode === "html" && k === "=" && !hasSel){
+      const lt = before.lastIndexOf("<"), gt = before.lastIndexOf(">");
+      if (lt > gt && v.charAt(lt + 1) !== "/" && /[a-zA-Z-]$/.test(before)){
+        e.preventDefault();
+        applyEdit(t, s, en, '=""', s + 2);
+        return;
+      }
+    }
+
+    // ---- "}" on an empty line tucks itself back one level ----
+    if (mode === "css" && k === "}" && !hasSel){
+      const ls = lineStartAt(s);
+      const lineSoFar = v.slice(ls, s);
+      if (/^ +$/.test(lineSoFar) && lineSoFar.length >= INDENT.length){
+        e.preventDefault();
+        applyEdit(t, s - INDENT.length, s, "}");
+        return;
+      }
+    }
+
+    // ---- wrap a selection in brackets/quotes ----
+    if (hasSel && PAIRS[k]){
+      e.preventDefault();
+      applyEdit(t, s, en, k + v.slice(s, en) + PAIRS[k], s + 1, en + 1);
+      return;
+    }
+
+    // ---- auto-pair brackets and quotes ----
+    if (!hasSel && PAIRS[k]){
+      // don't pair an apostrophe mid-word ("I'm", "don't")
+      if (k === "'" && /[a-zA-Z0-9]/.test(prev)) return;
+      // only pair when something sensible follows (end of line, space, closer…)
+      if (next === "" || /[\s)\]}>,;.<]/.test(next)){
+        e.preventDefault();
+        applyEdit(t, s, en, k + PAIRS[k], s + 1);
+        return;
+      }
+    }
+  });
+}
+
+installSmartEditor(el.html, "html");
+installSmartEditor(el.css, "css");
+
+// ---- undo/redo wiring ----
+const hist = { html: makeHistory(el.html), css: makeHistory(el.css) };
+function histFor(t){ return t === el.html ? hist.html : hist.css; }
+function activeHist(){ return activePane === "html" ? hist.html : hist.css; }
+
+const undoBtn = document.getElementById("undoBtn");
+const redoBtn = document.getElementById("redoBtn");
+
+function updateUndoButtons(){
+  const h = activeHist();
+  undoBtn.disabled = !h.canUndo();
+  redoBtn.disabled = !h.canRedo();
+}
+
+// group plain typing into undo steps
+el.html.addEventListener("input", () => hist.html.commitSoon());
+el.css.addEventListener("input", () => hist.css.commitSoon());
+
+// keep focus in the editor when clicking the buttons
+for (const b of [undoBtn, redoBtn]) b.addEventListener("mousedown", e => e.preventDefault());
+undoBtn.addEventListener("click", () => activeHist().undo());
+redoBtn.addEventListener("click", () => activeHist().redo());
+
+// buttons reflect whichever file is showing
+document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", updateUndoButtons));
+updateUndoButtons();
 
 // pane tabs
 document.querySelectorAll(".tab").forEach(tab => {
