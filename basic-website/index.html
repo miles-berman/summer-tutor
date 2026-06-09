@@ -5,9 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Website Maker</title>
 
-<!-- highlight.js: theme + library (loaded before the app script below) -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<!-- highlight.js: theme + library (loaded before the app script below).
+     integrity = Subresource Integrity. The browser refuses to run the file
+     unless its bytes hash to exactly this value, so a tampered/poisoned CDN
+     response is blocked. crossorigin="anonymous" is required for SRI on a CDN.
+
+     To regenerate after a version bump, get the hash from any of these:
+       - cdnjs.com: search highlight.js -> click the file -> "Copy SRI"
+       - cdnjs API: https://api.cdnjs.com/libraries/highlight.js/11.9.0?fields=sri
+       - locally:  npm pack @highlightjs/cdn-assets@11.9.0   (this is what
+                   cdnjs serves), then for each file:
+                   openssl dgst -sha384 -binary FILE | openssl base64 -A
+                   and prefix the result with "sha384-".
+     If a hash is wrong the file silently won't load (editor falls back to
+     plain text), so verify against cdnjs if you change the version. -->
+<link rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css"
+      integrity="sha384-oaMLBGEzBOJx3UHwac0cVndtX5fxGQIfnAeFZ35RTgqPcYlbprH9o9PUV/F8Le07"
+      crossorigin="anonymous" referrerpolicy="no-referrer" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+        integrity="sha384-F/bZzf7p3Joyp5psL90p/p89AZJsndkSoGwRpXcZhleCWhd8SnRuoYo4d0yirjJp"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
 <style>
   :root {
@@ -170,6 +188,77 @@
     overflow: visible;
   }
 
+  /* ---------- assets panel ---------- */
+  .assets-panel {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--panel);
+    padding: 16px;
+  }
+  .assets-panel.hidden { display: none; }
+  .assets-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+  }
+  .assets-hint { font-size: 0.85rem; color: var(--muted); }
+  .assets-hint code {
+    background: #f3eee6;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 0.85em;
+  }
+  .assets-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+  .assets-empty {
+    color: var(--muted);
+    font-size: 0.9rem;
+    text-align: center;
+    padding: 30px 0;
+  }
+  .asset-card {
+    border: 2px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+  }
+  .asset-thumb {
+    height: 110px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* checkerboard so transparent images read clearly */
+    background-color: #faf6ef;
+    background-image:
+      linear-gradient(45deg, #ece3d6 25%, transparent 25%),
+      linear-gradient(-45deg, #ece3d6 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #ece3d6 75%),
+      linear-gradient(-45deg, transparent 75%, #ece3d6 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  }
+  .asset-thumb img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .asset-meta { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .asset-name {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--ink);
+    word-break: break-all;
+  }
+  .asset-btns { display: flex; gap: 6px; }
+  .asset-btns button { font-size: 0.76rem; padding: 6px 8px; border-radius: 8px; }
+  .asset-copy { background: #f3eee6; color: var(--ink); flex: 1; }
+  .asset-del  { background: #fff; color: var(--accent); border: 2px solid var(--accent); }
+
   .preview-head {
     padding: 12px 16px;
     background: var(--panel);
@@ -259,6 +348,7 @@
     <div class="tabs">
       <button class="tab active" data-pane="html">index.html</button>
       <button class="tab" data-pane="css">styles.css</button>
+      <button class="tab" data-pane="assets">assets/</button>
     </div>
 
     <div class="editor-wrap" id="htmlWrap">
@@ -269,6 +359,15 @@
     <div class="editor-wrap hidden" id="cssWrap">
       <pre class="hl" aria-hidden="true"><code id="cssHL" class="language-css"></code></pre>
       <textarea class="code" id="cssCode" spellcheck="false"></textarea>
+    </div>
+
+    <div class="assets-panel hidden" id="assetsWrap">
+      <div class="assets-bar">
+        <button class="btn-second" id="addAssetBtn">+ Add image</button>
+        <span class="assets-hint">Then use it like <code>&lt;img src="assets/your-file.png"&gt;</code> or <code>url(assets/your-file.png)</code> in CSS.</span>
+      </div>
+      <div class="assets-grid" id="assetsGrid"></div>
+      <input type="file" id="assetInput" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" multiple hidden />
     </div>
   </div>
 
@@ -281,7 +380,8 @@
 <div class="help">
   Your work saves automatically in this browser. <strong>Tab</strong> indents,
   <strong>Shift+Tab</strong> un-indents, and typing <code>&gt;</code> after a tag closes it for you.
-  When you're done, click <strong>Download this site</strong>.
+  Add pictures in the <strong>assets/</strong> tab, then
+  <strong>Download this site</strong> and send the file to your teacher.
 </div>
 
 <!-- naming modal -->
@@ -425,7 +525,9 @@ function makeZip(files){
   const push = a => { chunks.push(a); offset += a.length; };
   const central = [];
   for (const f of files){
-    const nameBytes = enc.encode(f.name), dataBytes = enc.encode(f.content), crc = crc32(dataBytes), lho = offset;
+    const nameBytes = enc.encode(f.name);
+    const dataBytes = f.content instanceof Uint8Array ? f.content : enc.encode(f.content);
+    const crc = crc32(dataBytes), lho = offset;
     const h = new Uint8Array(30 + nameBytes.length), dv = new DataView(h.buffer);
     dv.setUint32(0,0x04034b50,true); dv.setUint16(4,20,true); dv.setUint16(6,0x0800,true); dv.setUint16(8,0,true);
     dv.setUint16(10,0,true); dv.setUint16(12,0x21,true); dv.setUint32(14,crc,true);
@@ -458,9 +560,31 @@ function downloadBytes(filename, bytes){
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+function b64ToBytes(b64){
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
 
-// ---- preview: inject the CSS into the HTML, render in sandboxed iframe ----
-function buildPreview(html, css){
+// ---- preview: swap assets/* references for data URLs, inject CSS, render ----
+function escapeRe(s){ return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function rewriteAssetRefs(text, assets){
+  if (!assets || !assets.length) return text;
+  // longest names first so one name can't be a prefix of another
+  const sorted = [...assets].sort((a, b) => b.name.length - a.name.length);
+  let out = text;
+  for (const a of sorted){
+    const url = "data:" + a.type + ";base64," + a.data;
+    // match assets/NAME, ./assets/NAME, ../assets/NAME, /assets/NAME — but only
+    // after a delimiter, so "myassets/" etc. is left alone. The delimiter is kept.
+    const re = new RegExp('(^|[\\s"\'(=])(\\.{0,2}/)?assets/' + escapeRe(a.name), "g");
+    out = out.replace(re, (m, pre) => pre + url);
+  }
+  return out;
+}
+function buildPreview(html, css, assets){
+  html = rewriteAssetRefs(html, assets);
+  css  = rewriteAssetRefs(css, assets);
   const styleTag = "<style>\n" + css + "\n<\/style>";
   if (/<\/head>/i.test(html)) return html.replace(/<\/head>/i, styleTag + "</head>");
   if (/<body[^>]*>/i.test(html)) return html.replace(/(<body[^>]*>)/i, "$1" + styleTag);
@@ -470,6 +594,7 @@ function buildPreview(html, css){
 // ---- app state + elements ----
 let activeSlug = null;
 let activePane = "html";
+let curAssets = [];   // assets of the active site: { name, type, data(base64) }
 const el = {
   select: document.getElementById("siteSelect"),
   status: document.getElementById("status"),
@@ -477,6 +602,9 @@ const el = {
   css: document.getElementById("cssCode"),
   htmlWrap: document.getElementById("htmlWrap"),
   cssWrap: document.getElementById("cssWrap"),
+  assetsWrap: document.getElementById("assetsWrap"),
+  assetsGrid: document.getElementById("assetsGrid"),
+  assetInput: document.getElementById("assetInput"),
   preview: document.getElementById("preview"),
   overlay: document.getElementById("overlay"),
   nameInput: document.getElementById("nameInput"),
@@ -526,9 +654,11 @@ function loadSite(slug){
   store.set(ACTIVE, slug);
   el.html.value = site.html;
   el.css.value = site.css;
+  curAssets = (site.assets || []).slice();
   hist.html.reset();
   hist.css.reset();
   refreshSiteList();
+  renderAssets();
   updatePreview();
   syncHighlights();
   setStatus("All changes saved");
@@ -554,13 +684,174 @@ let previewTimer = null;
 function updatePreview(){
   clearTimeout(previewTimer);
   previewTimer = setTimeout(() => {
-    el.preview.srcdoc = buildPreview(el.html.value, el.css.value);
+    el.preview.srcdoc = buildPreview(el.html.value, el.css.value, curAssets);
   }, 200);
 }
 
 function onCodeInput(){ scheduleSave(); updatePreview(); syncHighlights(); }
 el.html.addEventListener("input", onCodeInput);
 el.css.addEventListener("input", onCodeInput);
+
+/* =========================================================
+   Assets — small images bundled with the site.
+   Stored base64 on the site object in localStorage, rewritten
+   to data URLs in the preview, and written out as real files
+   under <slug>/assets/ in the download zip.
+   ========================================================= */
+const MAX_ASSET_BYTES = 2 * 1024 * 1024;   // 2 MB per image — these live in localStorage
+
+function safeAssetName(name){
+  const dot = name.lastIndexOf(".");
+  let stem = (dot > 0 ? name.slice(0, dot) : name)
+    .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "image";
+  let ext = (dot > 0 ? name.slice(dot + 1) : "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, "") || "png";
+  return stem + "." + ext;
+}
+function uniqueAssetName(base){
+  const taken = new Set(curAssets.map(a => a.name));
+  if (!taken.has(base)) return base;
+  const dot = base.lastIndexOf(".");
+  const stem = base.slice(0, dot), ext = base.slice(dot);
+  let n = 2;
+  while (taken.has(stem + "-" + n + ext)) n++;
+  return stem + "-" + n + ext;
+}
+
+// Persist curAssets (+ current code) onto the active site.
+// Returns true on success, false only when localStorage is full.
+function commitAssets(){
+  const site = getSite(activeSlug);
+  if (!site) return true;
+  site.html = el.html.value;
+  site.css = el.css.value;
+  site.assets = curAssets;
+  site.updated = Date.now();
+  const json = JSON.stringify(site);
+  let hasLS = false;
+  try { localStorage.length; hasLS = true; } catch(e){ hasLS = false; }
+  if (hasLS){
+    try { localStorage.setItem(PREFIX + site.slug, json); return true; }
+    catch(e){ return false; }   // quota exceeded
+  }
+  mem[PREFIX + site.slug] = json;   // private mode: keep it in memory for the session
+  return true;
+}
+
+function readFileAsBase64(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const res = String(r.result);
+      const comma = res.indexOf(",");
+      resolve(res.slice(comma + 1));   // strip the "data:...;base64," prefix
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function addAssetFiles(fileList){
+  const files = Array.from(fileList || []);
+  for (const file of files){
+    // SVG is excluded on purpose: it's an image type that can carry <script>.
+    if (!/^image\//.test(file.type) || file.type === "image/svg+xml"){
+      alert('"' + file.name + '" isn\'t a supported image (PNG, JPG, GIF, WebP, AVIF), so it was skipped.');
+      continue;
+    }
+    if (file.size > MAX_ASSET_BYTES){
+      alert('"' + file.name + '" is too big (max 2 MB). Try a smaller image.');
+      continue;
+    }
+    let data;
+    try { data = await readFileAsBase64(file); }
+    catch(e){ alert('Could not read "' + file.name + '".'); continue; }
+
+    const name = uniqueAssetName(safeAssetName(file.name));
+    const asset = { name, type: file.type, data };
+    curAssets.push(asset);
+    if (!commitAssets()){
+      curAssets.pop();                 // roll the failed one back out
+      commitAssets();
+      alert("Out of room — your browser can't store any more images for this site. Delete some, or use smaller files.");
+      break;
+    }
+  }
+  renderAssets();
+  updatePreview();
+}
+
+function deleteAsset(name){
+  const a = curAssets.find(x => x.name === name);
+  if (!a) return;
+  if (!confirm('Remove "' + a.name + '"?')) return;
+  curAssets = curAssets.filter(x => x.name !== name);
+  commitAssets();
+  renderAssets();
+  updatePreview();
+}
+
+function renderAssets(){
+  const grid = el.assetsGrid;
+  grid.innerHTML = "";
+  if (!curAssets.length){
+    const empty = document.createElement("div");
+    empty.className = "assets-empty";
+    empty.textContent = "No images yet. Click “+ Add image” to upload one.";
+    grid.appendChild(empty);
+    return;
+  }
+  for (const a of curAssets){
+    const card = document.createElement("div");
+    card.className = "asset-card";
+
+    const thumb = document.createElement("div");
+    thumb.className = "asset-thumb";
+    const img = document.createElement("img");
+    img.src = "data:" + a.type + ";base64," + a.data;
+    img.alt = a.name;
+    thumb.appendChild(img);
+
+    const meta = document.createElement("div");
+    meta.className = "asset-meta";
+    const nm = document.createElement("div");
+    nm.className = "asset-name";
+    nm.textContent = "assets/" + a.name;
+
+    const btns = document.createElement("div");
+    btns.className = "asset-btns";
+    const copy = document.createElement("button");
+    copy.className = "asset-copy";
+    copy.textContent = "Copy <img>";
+    copy.addEventListener("click", () => {
+      const tag = '<img src="assets/' + a.name + '" alt="">';
+      const flash = () => { copy.textContent = "Copied!"; setTimeout(() => copy.textContent = "Copy <img>", 1200); };
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(tag).then(flash, flash);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = tag; document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } catch(e){}
+        ta.remove(); flash();
+      }
+    });
+    const del = document.createElement("button");
+    del.className = "asset-del";
+    del.textContent = "Delete";
+    del.addEventListener("click", () => deleteAsset(a.name));
+
+    btns.appendChild(copy); btns.appendChild(del);
+    meta.appendChild(nm); meta.appendChild(btns);
+    card.appendChild(thumb); card.appendChild(meta);
+    grid.appendChild(card);
+  }
+}
+
+document.getElementById("addAssetBtn").addEventListener("click", () => el.assetInput.click());
+el.assetInput.addEventListener("change", () => {
+  addAssetFiles(el.assetInput.files);
+  el.assetInput.value = "";   // allow re-picking the same file later
+});
 
 /* =========================================================
    Smart editing
@@ -808,15 +1099,19 @@ installSmartEditor(el.css, "css");
 // ---- undo/redo wiring ----
 const hist = { html: makeHistory(el.html), css: makeHistory(el.css) };
 function histFor(t){ return t === el.html ? hist.html : hist.css; }
-function activeHist(){ return activePane === "html" ? hist.html : hist.css; }
+function activeHist(){
+  if (activePane === "html") return hist.html;
+  if (activePane === "css")  return hist.css;
+  return null;   // assets pane has no editor history
+}
 
 const undoBtn = document.getElementById("undoBtn");
 const redoBtn = document.getElementById("redoBtn");
 
 function updateUndoButtons(){
   const h = activeHist();
-  undoBtn.disabled = !h.canUndo();
-  redoBtn.disabled = !h.canRedo();
+  undoBtn.disabled = !h || !h.canUndo();
+  redoBtn.disabled = !h || !h.canRedo();
 }
 
 // group plain typing into undo steps
@@ -825,22 +1120,23 @@ el.css.addEventListener("input", () => hist.css.commitSoon());
 
 // keep focus in the editor when clicking the buttons
 for (const b of [undoBtn, redoBtn]) b.addEventListener("mousedown", e => e.preventDefault());
-undoBtn.addEventListener("click", () => activeHist().undo());
-redoBtn.addEventListener("click", () => activeHist().redo());
+undoBtn.addEventListener("click", () => { const h = activeHist(); if (h) h.undo(); });
+redoBtn.addEventListener("click", () => { const h = activeHist(); if (h) h.redo(); });
 
-// buttons reflect whichever file is showing
-document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", updateUndoButtons));
-updateUndoButtons();
-
-// pane tabs
+// ---- pane switching (index.html / styles.css / assets) ----
+function showPane(name){
+  activePane = name;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.pane === name));
+  el.htmlWrap.classList.toggle("hidden", name !== "html");
+  el.cssWrap.classList.toggle("hidden", name !== "css");
+  el.assetsWrap.classList.toggle("hidden", name !== "assets");
+  if (name === "assets") renderAssets();
+  updateUndoButtons();
+}
 document.querySelectorAll(".tab").forEach(tab => {
-  tab.addEventListener("click", () => {
-    activePane = tab.dataset.pane;
-    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === tab));
-    el.htmlWrap.classList.toggle("hidden", activePane !== "html");
-    el.cssWrap.classList.toggle("hidden", activePane !== "css");
-  });
+  tab.addEventListener("click", () => showPane(tab.dataset.pane));
 });
+updateUndoButtons();
 
 el.select.addEventListener("change", () => loadSite(el.select.value));
 
@@ -865,14 +1161,11 @@ function createFromModal(){
   const raw = el.nameInput.value.trim();
   if (!raw){ el.nameErr.textContent = "Please type a name."; return; }
   const slug = uniqueSlug(slugify(raw));
-  const site = { slug, name: raw, html: STARTER_HTML, css: STARTER_CSS, updated: Date.now() };
+  const site = { slug, name: raw, html: STARTER_HTML, css: STARTER_CSS, assets: [], updated: Date.now() };
   saveSite(site);
   closeModal();
   loadSite(slug);
-  activePane = "html";
-  document.querySelectorAll(".tab").forEach((t,i) => t.classList.toggle("active", i === 0));
-  el.htmlWrap.classList.remove("hidden");
-  el.cssWrap.classList.add("hidden");
+  showPane("html");
 }
 
 // ---- delete ----
@@ -890,11 +1183,14 @@ document.getElementById("deleteBtn").addEventListener("click", () => {
 document.getElementById("downloadBtn").addEventListener("click", () => {
   const site = getSite(activeSlug);
   if (!site) return;
-  const zip = makeZip([
+  const files = [
     { name: site.slug + "/index.html", content: el.html.value },
     { name: site.slug + "/styles.css", content: el.css.value },
-  ]);
-  downloadBytes(site.slug + ".zip", zip);
+  ];
+  for (const a of curAssets){
+    files.push({ name: site.slug + "/assets/" + a.name, content: b64ToBytes(a.data) });
+  }
+  downloadBytes(site.slug + ".zip", makeZip(files));
 });
 
 document.getElementById("downloadAllBtn").addEventListener("click", () => {
@@ -904,6 +1200,9 @@ document.getElementById("downloadAllBtn").addEventListener("click", () => {
   for (const s of sites){
     files.push({ name: s.slug + "/index.html", content: s.html });
     files.push({ name: s.slug + "/styles.css", content: s.css });
+    for (const a of (s.assets || [])){
+      files.push({ name: s.slug + "/assets/" + a.name, content: b64ToBytes(a.data) });
+    }
   }
   downloadBytes("all-sites.zip", makeZip(files));
 });
