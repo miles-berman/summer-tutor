@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Base Defense</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0f111a; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+  <script src="https://unpkg.com/kaplay@3001.0.19/dist/kaplay.js"></script>
+</head>
+<body>
+<script>
+// ----------------------------------------------------------------------------
+// init
+// ----------------------------------------------------------------------------
+kaplay({
+  width: 960,
+  height: 600,
+  background: "#181a25",
+  letterbox: true,
+  crisp: true,
+  global: true,
+});
+
+const hex = (h) => Color.fromHex(h);
+
+// enemy sprite — path is relative to the served HTML file
+loadSprite("bug", "assets/bug.png");
+
+// ----------------------------------------------------------------------------
+// CONFIG  — tune everything here. The game scales by wave number from this.
+// ----------------------------------------------------------------------------
+const CFG = {
+  baseCount:   2,      // wave N enemy count = baseCount * 2^(N-1)  (doubles each wave)
+  enemyBaseHp: 3,
+  hpScale:     0.30,   // +30% hp per wave
+  enemyBaseSpd:55,
+  spdPerWave:  5,
+  dmgScale:    0.14,   // +14% enemy damage per wave
+  enemyBaseR:  14,     // base radius; each type multiplies this by its own `scale`
+  enemyScale:  1,      // master multiplier applied on top of every type's scale
+  powerChance: 0.05,   // chance an enemy drops a rare power-up on death
+  coinBase:    2,
+  coinPerWave: 0.4,
+  baseHp:      100,
+  bulletSpd:   560,
+  // starting player stats
+  startDmg:    2,
+  startRate:   0.55,   // seconds between shots
+  startSpeed:  230,
+};
+
+// layout
+const W = 960, H = 600;
+const HUD_H = 46, SHOP_H = 92;
+const FIELD_TOP = HUD_H;
+const FIELD_BOT = H - SHOP_H;        // 508
+const BASE_X = 34;                   // right edge of the wall
+
+// palette
+const COL = {
+  field:  "#b9c2d4",
+  mine:   "#2bd4c0",
+  base:   "#3b8beb",
+  bullet: "#16203a",
+  coin:   "#ffd166",
+  good:   "#1f9d4d",
+  bad:    "#ff5470",
+};
+
+// ----------------------------------------------------------------------------
+// shared helpers
+// ----------------------------------------------------------------------------
+function burst(p, colHex, n = 10, spd = 200) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2);
+    const s = rand(spd * 0.4, spd);
+    add([
+      circle(rand(2, 4)), pos(p), anchor("center"),
+      color(hex(colHex)), opacity(1),
+      move(vec2(Math.cos(a), Math.sin(a)), s),
+      lifespan(0.4, { fade: 0.3 }), z(40),
+    ]);
+  }
+}
+
+function floatText(msg, p, colHex, size = 18) {
+  const t = add([
+    text(msg, { size }), pos(p), anchor("center"),
+    color(hex(colHex)), opacity(1),
+    lifespan(0.8, { fade: 0.5 }), z(70),
+  ]);
+  t.onUpdate(() => { t.pos.y -= 42 * dt(); });
+}
+
+function makeButton(cx, cy, w, h, onTap) {
+  const b = add([
+    rect(w, h, { radius: 8 }), pos(cx, cy), anchor("center"),
+    color(hex("#2a2e44")), outline(3, hex("#3a3f5e")),
+    area(), z(51), "btn",
+  ]);
+  b.onClick(() => onTap(b));
+  b.onHover(() => setCursor("pointer"));
+  b.onHoverEnd(() => setCursor("default"));
+  return b;
+}
+
+// ----------------------------------------------------------------------------
+// MENU
+// ----------------------------------------------------------------------------
+scene("menu", () => {
+  add([rect(W, H), color(hex("#181a25"))]);
+  add([text("BASE DEFENSE", { size: 64 }), pos(W / 2, 150), anchor("center"), color(hex(COL.mine))]);
+
+  const lines = [
+    "Move with WASD / Arrow Keys",
+    "You auto-fire at the nearest enemy",
+    "Enemies drop coins — spend them on upgrades below",
+    "Defend your base. Each cleared wave DOUBLES the swarm.",
+  ];
+  lines.forEach((l, i) =>
+    add([text(l, { size: 20 }), pos(W / 2, 250 + i * 34), anchor("center"), color(hex("#c8ccdd"))])
+  );
+
+  const start = makeButton(W / 2, 470, 240, 64, () => go("game"));
+  start.use(color(hex(COL.base)));
+  start.add([text("START", { size: 28 }), anchor("center"), color(hex("#ffffff"))]);
+
+  add([text("press SPACE", { size: 16 }), pos(W / 2, 540), anchor("center"), color(hex("#7a7f99"))]);
+  onKeyPress("space", () => go("game"));
+});
+
+// ----------------------------------------------------------------------------
+// GAME
+// ----------------------------------------------------------------------------
+scene("game", () => {
+  // --- state (all local => resets on restart) ---
+  let coins = 0;
+  let wave = 0;
+  let queue = 0;          // enemies left to spawn this wave
+  let spawnT = 0;
+  let inter = true;       // between-wave pause
+  let interT = 2.0;
+  let ended = false;
+
+  // active power-up timers (seconds remaining)
+  let discountT = 0, easyT = 0, blindT = 0;
+
+  // rare drops: short ground life, temporary effect
+  const POWERS = {
+    discount: { short: "%", col: "#ff9f1c", dur: 12, msg: "DISCOUNT  -50%" },
+    easy:     { short: "E", col: "#52d869", dur: 9,  msg: "EASY MODE" },
+    blind:    { short: "B", col: "#b388ff", dur: 8,  msg: "BLIND FLIES" },
+    magnet:   { short: "M", col: "#3bd6ff", dur: 0,  msg: "MAGNET" },  // instant: vacuum all coins
+  };
+
+  const effCost = (u) => discountT > 0 ? Math.ceil(u.cost * 0.5) : u.cost;
+
+  const up = {
+    dmg:  { name: "DAMAGE",    lvl: 0, cost: 12, mult: 1.55 },
+    rate: { name: "FIRE RATE", lvl: 0, cost: 15, mult: 1.6  },
+    spd:  { name: "SPEED",     lvl: 0, cost: 11, mult: 1.45 },
+    hp:   { name: "BASE HP",   lvl: 0, cost: 18, mult: 1.5  },
+  };
+
+  // --- field decor ---
+  add([rect(W, FIELD_BOT - FIELD_TOP), pos(0, FIELD_TOP), color(hex(COL.field)), z(-10)]);
+  add([rect(W / 2, FIELD_BOT - FIELD_TOP), pos(0, FIELD_TOP), color(hex(COL.mine)), opacity(0.05), z(-9)]);
+  add([rect(W / 2, FIELD_BOT - FIELD_TOP), pos(W / 2, FIELD_TOP), color(hex(COL.bad)), opacity(0.16), z(-9)]);
+  add([text("DANGER ZONE", { size: 16 }), pos(W * 0.75, FIELD_TOP + 18), anchor("center"), color(hex(COL.bad)), opacity(0.5), z(-8)]);
+  add([rect(2, FIELD_BOT - FIELD_TOP), pos(W / 2, FIELD_TOP), color(hex("#ffffff")), opacity(0.06), z(-9)]);
+
+  // --- base wall ---
+  const base = add([
+    rect(20, FIELD_BOT - FIELD_TOP), pos(14, FIELD_TOP),
+    color(hex(COL.base)), outline(3, hex("#1f5fb0")), z(2),
+    { hp: CFG.baseHp, maxHp: CFG.baseHp },
+  ]);
+
+  // --- player ---
+  const player = add([
+    rect(26, 26, { radius: 5 }), pos(150, (FIELD_TOP + FIELD_BOT) / 2),
+    anchor("center"), color(hex(COL.mine)), outline(3, hex("#157f72")),
+    rotate(0), area(), z(10),
+    { speed: CFG.startSpeed, dmg: CFG.startDmg, rate: CFG.startRate, fireT: 0, stun: 0, hitCd: 0 },
+  ]);
+  player.add([rect(20, 8, { radius: 3 }), pos(8, 0), anchor("left"), color(hex("#157f72"))]);
+  const stunLbl = player.add([text("STUNNED", { size: 14 }), pos(0, -26), anchor("center"), color(hex("#ffce5c")), opacity(0)]);
+
+  // get stunned if you fight in enemy territory (right half = danger zone)
+  player.onCollide("enemy", () => {
+    if (player.stun > 0 || player.hitCd > 0) return;
+    if (player.pos.x > W / 2) {
+      player.stun = 1.1;
+      shake(9);
+      burst(player.pos, "#ffce5c", 9, 170);
+      player.pos.x = clamp(player.pos.x - 80, BASE_X + 30, W - 20); // knocked back toward safe side
+    }
+  });
+
+  function nearest(p) {
+    let best = null, bd = Infinity;
+    for (const e of get("enemy")) {
+      const d = e.pos.dist(p);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+
+  player.onUpdate(() => {
+    if (ended) return;
+
+    if (player.hitCd > 0) player.hitCd -= dt();
+
+    // stunned: can't move or shoot
+    if (player.stun > 0) {
+      player.stun -= dt();
+      player.color = hex("#8a8f9e");
+      stunLbl.opacity = Math.sin(time() * 22) > 0 ? 1 : 0;
+      if (player.stun <= 0) {
+        player.color = hex(COL.mine);
+        stunLbl.opacity = 0;
+        player.hitCd = 0.6; // brief grace to escape
+      }
+      return;
+    }
+
+    // movement
+    let dx = 0, dy = 0;
+    if (isKeyDown("left")  || isKeyDown("a")) dx -= 1;
+    if (isKeyDown("right") || isKeyDown("d")) dx += 1;
+    if (isKeyDown("up")    || isKeyDown("w")) dy -= 1;
+    if (isKeyDown("down")  || isKeyDown("s")) dy += 1;
+    if (dx || dy) {
+      const v = vec2(dx, dy).unit().scale(player.speed * dt());
+      player.pos = player.pos.add(v);
+    }
+    player.pos.x = clamp(player.pos.x, BASE_X + 30, W - 20);
+    player.pos.y = clamp(player.pos.y, FIELD_TOP + 16, FIELD_BOT - 16);
+
+    // aim + auto-fire
+    const tgt = nearest(player.pos);
+    if (tgt) {
+      const d = tgt.pos.sub(player.pos).unit();
+      player.angle = Math.atan2(d.y, d.x) * 180 / Math.PI;
+      player.fireT -= dt();
+      if (player.fireT <= 0) {
+        shoot(player.pos.add(d.scale(18)), d, player.dmg);
+        burst(player.pos.add(d.scale(18)), COL.bullet, 3, 90);
+        player.fireT = player.rate;
+      }
+    }
+  });
+
+  function shoot(from, dir, dmg) {
+    const b = add([
+      circle(5), pos(from), anchor("center"), color(hex(COL.bullet)),
+      area(), move(dir, CFG.bulletSpd), opacity(1), lifespan(2), z(8),
+      "bullet", { dmg, dead: false },
+    ]);
+    b.onUpdate(() => {
+      if (b.pos.x < -20 || b.pos.x > W + 20 || b.pos.y < FIELD_TOP - 20 || b.pos.y > FIELD_BOT + 20)
+        destroy(b);
+    });
+  }
+
+  // --- enemies ---
+  // scale = size (min 2x). coin = reward. weight = how common. Bigger = richer + rarer.
+  const TYPES = {
+    mite:  { scale: 2.0, hp: 0.6, spd: 1.7,  coin: 1, dmg: 5,  col: "#ffce5c", minWave: 1, weight: 6 },
+    grunt: { scale: 3.0, hp: 1.0, spd: 1.0,  coin: 3, dmg: 9,  col: "#ff5470", minWave: 1, weight: 4 },
+    hulk:  { scale: 4.2, hp: 2.6, spd: 0.7,  coin: 7, dmg: 14, col: "#5a9bff", minWave: 3, weight: 2 },
+    brute: { scale: 5.5, hp: 4.5, spd: 0.5,  coin:14, dmg: 22, col: "#9b6cff", minWave: 5, weight: 1 },
+  };
+
+  function pickType() {
+    const pool = [];
+    for (const k in TYPES) {
+      const t = TYPES[k];
+      if (wave >= t.minWave) for (let i = 0; i < t.weight; i++) pool.push(k);
+    }
+    return choose(pool);
+  }
+
+  function spawnEnemy() {
+    const key = pickType();
+    const t = TYPES[key];
+    const dw = easyT > 0 ? 1 : wave;   // EASY MODE spawns at wave-1 difficulty
+    const hp = Math.max(1, Math.round(CFG.enemyBaseHp * (1 + CFG.hpScale * (dw - 1)) * t.hp));
+    const spd = (CFG.enemyBaseSpd + dw * CFG.spdPerWave) * t.spd;
+    const coin = Math.max(1, Math.round((CFG.coinBase + wave * CFG.coinPerWave) * t.coin));
+    const dmg = Math.round(t.dmg * (1 + CFG.dmgScale * (dw - 1)));
+    const r = CFG.enemyBaseR * t.scale * CFG.enemyScale;
+
+    const e = add([
+      sprite("bug", { width: r * 2, height: r * 2 }), pos(W - 24, rand(FIELD_TOP + r + 4, FIELD_BOT - r - 4)),
+      anchor("center"), scale(1),
+      area(), z(5),
+      "enemy",
+      { hp, maxHp: hp, dmg, coin, colHex: t.col, hit: 0, r, spd, dir: Math.PI, wanderT: 0 },
+    ]);
+
+    const barBg = e.add([rect(r * 2, 4, { radius: 2 }), pos(0, -(r + 9)), anchor("center"), color(hex("#000000")), opacity(0)]);
+    const barFl = e.add([rect(r * 2, 4, { radius: 2 }), pos(-r, -(r + 9)), anchor("left"), color(hex(COL.good)), opacity(0)]);
+
+    e.onUpdate(() => {
+      // movement (manual, so power-ups can alter it)
+      const sp = e.spd * (easyT > 0 ? 0.55 : 1);
+      if (blindT > 0) {
+        e.wanderT -= dt();
+        if (e.wanderT <= 0) { e.dir = rand(0, Math.PI * 2); e.wanderT = rand(0.3, 0.9); }
+        e.pos.x += Math.cos(e.dir) * sp * dt();
+        e.pos.y += Math.sin(e.dir) * sp * dt();
+      } else {
+        e.pos.x -= sp * dt();
+      }
+      e.pos.y = clamp(e.pos.y, FIELD_TOP + e.r, FIELD_BOT - e.r);
+      e.pos.x = Math.min(e.pos.x, W - e.r);
+
+      if (e.pos.x <= BASE_X + e.r) { hitBase(e); return; }
+      const ratio = clamp(e.hp / e.maxHp, 0, 1);
+      barFl.width = e.r * 2 * ratio;
+      const show = ratio < 0.999 ? 1 : 0;
+      barBg.opacity = show * 0.45;
+      barFl.opacity = show;
+      if (e.hit > 0) {
+        e.hit -= dt();
+        e.scale = e.hit > 0 ? vec2(1.18) : vec2(1);
+      }
+    });
+  }
+
+  function killEnemy(e) {
+    burst(e.pos, e.colHex, 12, 220);
+    dropCoin(e.pos, e.coin);
+    if (chance(CFG.powerChance)) dropPower(e.pos);
+    destroy(e);
+  }
+
+  // --- rare power-ups ---
+  function dropPower(p) {
+    const key = choose(Object.keys(POWERS));
+    const P = POWERS[key];
+    const g = add([
+      circle(16), pos(p), anchor("center"), scale(1),
+      color(hex(P.col)), outline(3, hex("#ffffff")), opacity(1),
+      z(7), "power", { key, life: 6.5 },
+    ]);
+    g.add([text(P.short, { size: 18 }), anchor("center"), color(hex("#1a1a1a"))]);
+    g.onUpdate(() => {
+      g.scale = vec2(1 + Math.sin(time() * 6) * 0.12);
+      g.life -= dt();
+      g.opacity = g.life < 2 ? (Math.sin(time() * 18) > 0 ? 1 : 0.25) : 1; // blink before expiring
+      if (g.life <= 0) { destroy(g); return; }
+      if (player.pos.dist(g.pos) < 36) { collectPower(g.key, g.pos); destroy(g); }
+    });
+  }
+
+  function collectPower(key, p) {
+    const P = POWERS[key];
+    if (key === "discount") discountT = P.dur;
+    if (key === "easy")     easyT = P.dur;
+    if (key === "blind")    blindT = P.dur;
+    if (key === "magnet") {
+      let total = 0;
+      for (const c of get("coin")) { total += c.val; burst(c.pos, COL.coin, 3, 120); destroy(c); }
+      coins += total;
+      floatText("+" + total, player.pos, COL.coin, 24);
+      banner(P.msg + "  +" + total, P.col);
+      burst(p, P.col, 16, 240);
+      return;
+    }
+    banner(P.msg, P.col);
+    burst(p, P.col, 16, 240);
+  }
+
+  function hitBase(e) {
+    base.hp -= e.dmg;
+    shake(7);
+    burst(vec2(BASE_X, e.pos.y), COL.base, 8, 150);
+    destroy(e);
+    if (base.hp <= 0 && !ended) {
+      base.hp = 0;
+      ended = true;
+      shake(20);
+      wait(0.35, () => go("gameover", { wave }));
+    }
+  }
+
+  onCollide("bullet", "enemy", (b, e) => {
+    if (b.dead || !e.exists()) return;
+    b.dead = true;
+    e.hp -= b.dmg;
+    e.hit = 0.07;
+    burst(b.pos, COL.bullet, 3, 100);
+    destroy(b);
+    if (e.hp <= 0) killEnemy(e);
+  });
+
+  // --- coins ---
+  function dropCoin(p, val) {
+    const c = add([
+      circle(7), pos(p.add(vec2(rand(-10, 10), rand(-10, 10)))),
+      anchor("center"), color(hex(COL.coin)), outline(2, hex("#b8860b")),
+      z(3), "coin", { val },
+    ]);
+    c.onUpdate(() => {
+      const d = player.pos.dist(c.pos);
+      if (d < 150) c.pos = c.pos.lerp(player.pos, Math.min(1, dt() * 9));
+      if (d < 20) {
+        coins += c.val;
+        floatText("+" + c.val, c.pos, COL.coin, 16);
+        destroy(c);
+      }
+    });
+  }
+
+  // --- banners + wave control ---
+  function banner(msg, colHex) {
+    const t = add([
+      text(msg, { size: 40 }), pos(W / 2, FIELD_TOP + 90), anchor("center"),
+      color(hex(colHex)), opacity(1), lifespan(1.6, { fade: 0.7 }), z(70),
+    ]);
+    t.onUpdate(() => { t.pos.y -= 14 * dt(); });
+  }
+
+  function startWave() {
+    wave++;
+    queue = Math.round(CFG.baseCount * Math.pow(2, wave - 1));
+    spawnT = 0;
+    inter = false;
+    banner("WAVE " + wave, COL.coin);
+  }
+
+  function spawnInterval() {
+    return clamp(0.9 - wave * 0.05, 0.22, 0.9);
+  }
+
+  onUpdate(() => {
+    if (ended) return;
+    if (inter) {
+      interT -= dt();
+      if (interT <= 0) startWave();
+    } else if (queue > 0) {
+      spawnT -= dt();
+      if (spawnT <= 0) { spawnEnemy(); queue--; spawnT = spawnInterval(); }
+    } else if (get("enemy").length === 0) {
+      inter = true;
+      interT = 3.0;
+      const bonus = 5 * wave;
+      coins += bonus;
+      banner("WAVE " + wave + " CLEARED   +" + bonus, COL.good);
+    }
+  });
+
+  // ----------------------------------------------------------------------------
+  // HUD
+  // ----------------------------------------------------------------------------
+  add([rect(W, HUD_H), pos(0, 0), color(hex("#11131c")), z(100)]);
+  const waveTxt = add([text("", { size: 22 }), pos(16, HUD_H / 2), anchor("left"), color(hex("#ffffff")), z(101)]);
+  const coinTxt = add([text("", { size: 22 }), pos(W - 16, HUD_H / 2), anchor("right"), color(hex(COL.coin)), z(101)]);
+  add([text("BASE", { size: 14 }), pos(W / 2 - 130, HUD_H / 2), anchor("center"), color(hex("#c8ccdd")), z(101)]);
+  const hpBarBg = add([rect(200, 16, { radius: 8 }), pos(W / 2 - 100, HUD_H / 2), anchor("left"), color(hex("#2a2e44")), z(101)]);
+  const hpBarFl = add([rect(200, 16, { radius: 8 }), pos(W / 2 - 100, HUD_H / 2), anchor("left"), color(hex(COL.good)), z(102)]);
+  const buffTxt = add([text("", { size: 16 }), pos(16, FIELD_TOP + 14), anchor("left"), color(hex("#ffffff")), z(90)]);
+
+  onUpdate(() => {
+    waveTxt.text = "WAVE  " + (wave || "-");
+    coinTxt.text = "COINS  " + coins;
+    const r = clamp(base.hp / base.maxHp, 0, 1);
+    hpBarFl.width = 200 * r;
+    hpBarFl.color = r > 0.5 ? hex(COL.good) : r > 0.25 ? hex("#ffce5c") : hex(COL.bad);
+
+    // power-up timers
+    discountT = Math.max(0, discountT - dt());
+    easyT     = Math.max(0, easyT - dt());
+    blindT    = Math.max(0, blindT - dt());
+    const parts = [];
+    if (discountT > 0) parts.push("DISCOUNT " + Math.ceil(discountT) + "s");
+    if (easyT > 0)     parts.push("EASY " + Math.ceil(easyT) + "s");
+    if (blindT > 0)    parts.push("BLIND " + Math.ceil(blindT) + "s");
+    buffTxt.text = parts.join("    ");
+  });
+
+  // ----------------------------------------------------------------------------
+  // SHOP
+  // ----------------------------------------------------------------------------
+  add([rect(W, SHOP_H), pos(0, FIELD_BOT), color(hex("#11131c")), z(50)]);
+
+  const defs = [
+    { key: "dmg",  desc: "+1 per shot",  apply: () => { player.dmg += 1; } },
+    { key: "rate", desc: "shoot faster", apply: () => { player.rate = Math.max(0.1, player.rate * 0.85); } },
+    { key: "spd",  desc: "move faster",  apply: () => { player.speed = Math.min(440, player.speed + 28); } },
+    { key: "hp",   desc: "+25 & repair", apply: () => { base.maxHp += 25; base.hp = base.maxHp; } },
+  ];
+
+  const pad = 14, gap = 12;
+  const bw = (W - pad * 2 - gap * 3) / 4;
+  const bh = SHOP_H - 24;
+  const cy = FIELD_BOT + 12 + bh / 2;
+
+  defs.forEach((d, i) => {
+    const cx = pad + bw / 2 + i * (bw + gap);
+    const u = up[d.key];
+    const b = makeButton(cx, cy, bw, bh, () => {
+      const c = effCost(u);
+      if (coins >= c) {
+        coins -= c;
+        floatText("-" + c, vec2(cx, cy - bh / 2), COL.coin, 16);
+        d.apply();
+        u.lvl++;
+        u.cost = Math.ceil(u.cost * u.mult);
+        b.scale = vec2(1.08);
+        wait(0.08, () => { if (b.exists()) b.scale = vec2(1); });
+      } else {
+        b.color = hex("#5a2433");
+        wait(0.12, () => { if (b.exists()) b.color = hex("#2a2e44"); });
+      }
+    });
+    const nameT = b.add([text("", { size: 18 }), pos(0, -bh / 2 + 16), anchor("center"), color(hex("#ffffff"))]);
+    const descT = b.add([text(d.desc, { size: 13 }), pos(0, -2), anchor("center"), color(hex("#9aa0bd"))]);
+    const costT = b.add([text("", { size: 17 }), pos(0, bh / 2 - 15), anchor("center"), color(hex(COL.coin))]);
+
+    b.onUpdate(() => {
+      const c = effCost(u);
+      nameT.text = u.name + "  Lv" + u.lvl;
+      costT.text = c + "c";
+      const afford = coins >= c;
+      costT.color = discountT > 0 ? hex("#ff9f1c") : (afford ? hex(COL.good) : hex("#7a7f99"));
+      b.opacity = afford ? 1 : 0.8;
+    });
+  });
+});
+
+// ----------------------------------------------------------------------------
+// GAME OVER
+// ----------------------------------------------------------------------------
+scene("gameover", ({ wave }) => {
+  add([rect(W, H), color(hex("#181a25"))]);
+  add([text("GAME OVER", { size: 64 }), pos(W / 2, 180), anchor("center"), color(hex(COL.bad))]);
+  add([text("You reached Wave " + wave, { size: 28 }), pos(W / 2, 270), anchor("center"), color(hex("#ffffff"))]);
+
+  const again = makeButton(W / 2, 380, 260, 64, () => go("game"));
+  again.use(color(hex(COL.mine)));
+  again.add([text("PLAY AGAIN", { size: 26 }), anchor("center"), color(hex("#0f111a"))]);
+
+  add([text("press R or SPACE", { size: 16 }), pos(W / 2, 450), anchor("center"), color(hex("#7a7f99"))]);
+  onKeyPress("r", () => go("game"));
+  onKeyPress("space", () => go("game"));
+});
+
+go("menu");
+</script>
+</body>
+</html>
