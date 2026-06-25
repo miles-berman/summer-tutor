@@ -19,22 +19,23 @@ const SPEED = 90   // player speed in pixels per second
 
 // Each tile gets a frame number, counted left-to-right, top-to-bottom.
 // The formula is:  frame = row * 18 + column   (use the overview image to pick)
-const FLOOR = 0            // c0_r0
+const FLOOR = 6 * 18 + 5           // c0_r0
 const WALL  = 2 * 18 + 4   // c4_r2  ->  frame 40
+const DOOR = 4 * 18 + 10
 
 // ----- The level, drawn as ASCII art -----
 // Edit this picture to design the dungeon:
 //   # = wall (solid)   . = floor   @ = where the player starts
 const LAYOUT = [
-  "####################",
+  "###########D########",
   "#..................#",
   "#..................#",
   "#....##....##......#",
-  "#....##....##......#",
+  "#........##......###",
   "#.........@........#",
   "#..................#",
   "#......####........#",
-  "#......#..........##",
+  "#.................##",
   "#..................#",
   "####################",
 ]
@@ -52,6 +53,12 @@ addLevel(LAYOUT, {
       area(),
       body({ isStatic: true }),
       "wall",
+    ],
+    "D": () => [
+      sprite("tiles", { frame: DOOR }),
+      area(),
+      body({ isStatic: true }),
+      "door",
     ],
   },
 })
