@@ -1,163 +1,24 @@
 import kaplay from "https://unpkg.com/kaplay@3001.0.19/dist/kaplay.mjs"
+import { TILE } from "./constants.js"
+import { loadAssets } from "./assets.js"
+import { buildLevel } from "./level.js"
+import { makePlayer } from "./player.js"
+import { spawnEnemy } from "./enemy.js"
 
-kaplay({
-  background: [22, 20, 30],
-  crisp: true,
-})
+kaplay({ background: [22, 20, 30], crisp: true })
 
-// ======================================================
-// Assets
-// ======================================================
+loadAssets()
+const { spawn, cols, rows } = buildLevel()
+const player = makePlayer(spawn)
 
-loadSprite("tiles", "sprites/tiles.png", {
-  sliceX: 18,
-  sliceY: 7,
-})
+spawnEnemy(vec2(TILE * 3, TILE * 3))
+spawnEnemy(vec2(TILE * 16, TILE * 8))
 
-// ======================================================
-// Constants
-// ======================================================
+// simple HP readout (screen-space, ignores camera)
+const hud = add([text("", { size: 12 }), pos(4, 4), fixed(), z(100)])
+hud.onUpdate(() => { hud.text = `HP ${player.hp}/${player.maxHp}` })
 
-const TILE = 16
-const SPEED = 90
-
-function tile(col, row) {
-  return row * 18 + col
-}
-
-const TILES = {
-  FLOOR: tile(8, 6),
-  WALL: tile(4, 2),
-  DOOR: tile(10, 4),
-}
-
-// ======================================================
-// Level Layout
-// ======================================================
-
-const LEVEL = [
-  "###########D########",
-  "#..................#",
-  "#..................#",
-  "#....##....##......#",
-  "#........##......###",
-  "#.........@........#",
-  "#..................#",
-  "#......####........#",
-  "#.................##",
-  "#..................#",
-  "####################",
-]
-
-// ======================================================
-// Find Player Spawn
-// ======================================================
-
-let spawn = vec2(TILE, TILE)
-
-LEVEL.forEach((row, r) => {
-  const c = row.indexOf("@")
-
-  if (c >= 0) {
-    spawn = vec2(
-      c * TILE + TILE / 2,
-      r * TILE + TILE / 2,
-    )
-  }
-})
-
-// ======================================================
-// Build Level
-// ======================================================
-
-addLevel(LEVEL, {
-  tileWidth: TILE,
-  tileHeight: TILE,
-
-  tiles: {
-    ".": () => [
-      sprite("tiles", { frame: TILES.FLOOR }),
-    ],
-
-    "@": () => [
-      sprite("tiles", { frame: TILES.FLOOR }),
-    ],
-
-    "#": () => [
-      sprite("tiles", { frame: TILES.WALL }),
-      area(),
-      body({ isStatic: true }),
-      "wall",
-    ],
-
-    "D": () => [
-      sprite("tiles", { frame: TILES.DOOR }),
-      area(),
-      body({ isStatic: true }),
-      "door",
-    ],
-  },
-})
-
-// ======================================================
-// Player
-// ======================================================
-
-const player = add([
-  rect(12, 14),
-  color(220, 180, 90),
-  anchor("center"),
-  pos(spawn),
-  area(),
-  body(),
-  "player",
-])
-
-// ======================================================
-// Movement
-// ======================================================
-
-const moves = {
-  left: () => player.move(-SPEED, 0),
-  right: () => player.move(SPEED, 0),
-  up: () => player.move(0, -SPEED),
-  down: () => player.move(0, SPEED),
-}
-
-for (const [key, fn] of Object.entries(moves)) {
-  onKeyDown(key, fn)
-}
-
-onKeyDown("a", moves.left)
-onKeyDown("d", moves.right)
-onKeyDown("w", moves.up)
-onKeyDown("s", moves.down)
-
-// ======================================================
-// Interactions
-// ======================================================
-
-player.onCollide("door", () => {
-  debug.log("You found the exit!")
-})
-
-// ======================================================
-// Camera
-// ======================================================
-
-const cols = LEVEL[0].length
-const rows = LEVEL.length
-
-const levelWidth = cols * TILE
-const levelHeight = rows * TILE
-
-// Auto-fit the level to the screen
-const zoomX = width() / levelWidth
-const zoomY = height() / levelHeight
-
-camScale(Math.min(zoomX, zoomY) * 0.9)
-
-camPos(
-  levelWidth / 2,
-  levelHeight / 2,
-)
+const w = cols * TILE
+const h = rows * TILE
+camScale(Math.min(width() / w, height() / h) * 0.9)
+camPos(w / 2, h / 2)
