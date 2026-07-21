@@ -41,7 +41,7 @@ export function loadAssets() {
     anims: { main: { from: 0, to: 1, loop: false, speed: 10 } },
   })
 
-  // die loaded but unused for now (skipping per request)
+  // die — 730x49 strip = 10 frames @ 73x49. Played on death (player + enemies).
   loadSprite("die", `${BASE}/atlas/die.png`, {
     sliceX: 10,
     anims: { main: { from: 0, to: 9, loop: false, speed: 12 } },
