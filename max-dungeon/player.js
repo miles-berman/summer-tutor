@@ -1,4 +1,6 @@
-import { attachAnim, attackSprite } from "./anim.js"
+import { attachAnim, attackSprite, facingFromVec } from "./anim.js"
+
+const STICK_DEADZONE = 0.28  // ignore small left-stick drift
 
 const HIT_KNOCKBACK = 260   // px/s shove when the player is hit
 const INVULN_TIME = 0.7     // i-frames after a hit
@@ -57,7 +59,8 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
       stunUntil: 0,        // time() until which movement/attacks are blocked
       charging: false,
       chargeStart: 0,
-      spaceDown: false,
+      attackHeld: false, // is the attack button (space or gamepad) held?
+      stickVec: vec2(0), // left-stick vector, cached each frame (see below)
       nextQuickAt: 0,
       nextSplashAt: 0,
     },
@@ -72,13 +75,26 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     down:  { keys: ["down", "s"],  vec: vec2(0, 1) },
   }
 
+  // Movement from any source: keyboard, gamepad d-pad, or left analog stick.
+  // The combined vector is clamped to length 1 so diagonals / full-stick aren't
+  // faster than a cardinal press (and partial stick tilt = a slower walk).
   function readInput() {
-    let dx = 0, dy = 0, moving = false, facing = player.facing
-    for (const [name, d] of Object.entries(dirs)) {
-      if (d.keys.some(isKeyDown)) {
-        dx += d.vec.x; dy += d.vec.y; facing = name; moving = true
-      }
+    let dx = 0, dy = 0
+    for (const d of Object.values(dirs)) {
+      if (d.keys.some(isKeyDown)) { dx += d.vec.x; dy += d.vec.y }
     }
+    if (isGamepadButtonDown("dpad-left"))  dx -= 1
+    if (isGamepadButtonDown("dpad-right")) dx += 1
+    if (isGamepadButtonDown("dpad-up"))    dy -= 1
+    if (isGamepadButtonDown("dpad-down"))  dy += 1
+    const st = player.stickVec
+    if (Math.abs(st.x) > STICK_DEADZONE) dx += st.x
+    if (Math.abs(st.y) > STICK_DEADZONE) dy += st.y
+
+    const mag = Math.sqrt(dx * dx + dy * dy)
+    if (mag > 1) { dx /= mag; dy /= mag }
+    const moving = mag > 0.001
+    const facing = moving ? facingFromVec(dx, dy, player.facing) : player.facing
     return { dx, dy, moving, facing }
   }
 
@@ -195,27 +211,32 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     player.stunUntil = Math.max(player.stunUntil, time() + dur)
     player.action = null
     player.charging = false
-    player.spaceDown = false
+    player.attackHeld = false
   }
 
   // ---------- input ----------
   // Tap or short hold = jab (spammable). Hold to full charge, then release = splash.
-  onKeyPress("space", () => {
-    if (player.dead || player.isStunned() || !isActive()) return
-    player.spaceDown = true
+  // Works from the keyboard (space) or a gamepad (A / south button).
+  function beginAttack() {
+    if (player.dead || player.isStunned() || !isActive() || player.attackHeld) return
+    player.attackHeld = true
     player.chargeStart = time()
     player.charging = false
-  })
-
-  onKeyRelease("space", () => {
-    if (!player.spaceDown) return
-    player.spaceDown = false
+  }
+  function endAttack() {
+    if (!player.attackHeld) return
+    player.attackHeld = false
     player.charging = false
     if (player.dead || player.isStunned()) return
     const held = time() - player.chargeStart
     if (held >= FULL_CHARGE) splashAttack()
     else quickAttack()
-  })
+  }
+
+  onKeyPress("space", beginAttack)
+  onKeyRelease("space", endAttack)
+  onGamepadButtonPress("south", beginAttack)
+  onGamepadButtonRelease("south", endAttack)
 
   // charge feedback ring — fills as you hold; turns red when a splash is ready.
   // Purely visual: the splash only fires on release (no auto-fire, no hold-spam).
@@ -256,7 +277,7 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     }
 
     // build charge visual while holding (no auto-fire; not while stunned)
-    if (player.spaceDown && !player.dead && !player.isStunned()) {
+    if (player.attackHeld && !player.dead && !player.isStunned()) {
       if (time() - player.chargeStart >= CHARGE_SHOW) player.charging = true
     }
 
@@ -297,7 +318,17 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     }
   })
 
-  player.onCollideUpdate("enemy", (e) => player.hurt(e.dmg ?? 1, e.pos))
+  // contact damage — but a dead enemy still lingers (with its "enemy" tag and
+  // hitbox) while its death animation plays, so skip corpses.
+  player.onCollideUpdate("enemy", (e) => {
+    if (e.dead) return
+    player.hurt(e.dmg ?? 1, e.pos)
+  })
+
+  // The gamepad stick is only valid during the per-frame update (it's polled
+  // then, and zeroed at frame end). Movement runs on the fixed step, which
+  // happens before the poll — so cache the stick here and read it there.
+  player.onUpdate(() => { player.stickVec = getGamepadStick("left") })
 
   return player
 }

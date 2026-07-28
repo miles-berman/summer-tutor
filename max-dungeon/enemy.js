@@ -13,9 +13,12 @@ const DIE_TIME = 0.85        // 10 frames @ 12fps
 
 // ---- boss tuning (a giant, scaled-up mob with the same AI) ----
 const BOSS_SCALE = 1.35
-const BOSS_HP = (level) => 25 + level * 6
+const BOSS_HP = (level) => 20 + level * 4
 const BOSS_SPEED_MULT = 0.6   // lumbering: slower than a normal mob (and the player)
-const BOSS_KNOCKBACK = 60      // heavy: barely flinches when hit
+const BOSS_KNOCKBACK = 0       // immune: a giant isn't shoved by jabs. (Any
+                               // knockback makes its AI skip a frame, and spammed
+                               // jabs re-apply it faster than it decays, which
+                               // would lock the boss out of ever acting.)
 const BOSS_MASS = 10           // heavy: the player can't shove it around
 const BOSS_MELEE_BONUS = 1     // hits harder in melee than a mob of the same level
 const BOSS_ATTACK_RANGE = 28   // longer reach (big body, long arms)
@@ -103,10 +106,11 @@ export function spawnEnemy(p, level = 1, opts = {}) {
   const attackRange = boss ? BOSS_ATTACK_RANGE : ATTACK_RANGE
   const hitRange = boss ? BOSS_HIT_RANGE : ATTACK_HIT_RANGE
   const areaShape = boss ? new Rect(vec2(0), 30, 34) : new Rect(vec2(0), 18, 24)
+  const baseTint = boss ? BOSS_TINT : [255, 110, 110]
 
   const e = add([
     sprite("idle_down", { anim: "main" }),
-    color(...(boss ? BOSS_TINT : [255, 110, 110])),
+    color(...baseTint),
     anchor("center"),
     scale(boss ? BOSS_SCALE : 0.5),
     pos(p),
@@ -126,6 +130,7 @@ export function spawnEnemy(p, level = 1, opts = {}) {
       action: null,        // null | "attack" | "hit"
       actionUntil: 0,
       atkCd: 0,
+      flashUntil: 0,       // brief white hit-flash so hits read even without knockback
       swingAt: 0,          // time() a pending melee swing lands (0 = none)
       nextPotAt: 0,        // boss: earliest time() the next pot may be thrown
       potReleaseAt: 0,     // boss: time() the wound-up pot leaves the hand (0 = none)
@@ -137,6 +142,7 @@ export function spawnEnemy(p, level = 1, opts = {}) {
   e.hurt = (amount = 1, fromPos = null) => {
     if (e.dead) return
     e.hp -= amount
+    e.flashUntil = time() + 0.07
     if (fromPos) {
       const away = e.pos.sub(fromPos)
       e.kb = (away.len() > 0 ? away.unit() : vec2(1, 0)).scale(knockback)
@@ -242,6 +248,11 @@ export function spawnEnemy(p, level = 1, opts = {}) {
       e.showIdle(e.facing)
     }
   })
+
+  // brief white flash on hit (drawn each frame; the base tint otherwise)
+  const flashCol = rgb(255, 240, 240)
+  const baseCol = rgb(...baseTint)
+  e.onUpdate(() => { e.color = time() < e.flashUntil ? flashCol : baseCol })
 
   return e
 }

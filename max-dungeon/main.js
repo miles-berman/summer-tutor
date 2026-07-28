@@ -99,13 +99,35 @@ scene("upgrade", (level, stats, summary = {}) => {
   }
   const descend = () => go("play", level + 1, stats)
 
+  // ui object also holds the highlighted row so keyboard + gamepad can navigate
+  const ui = add([fixed(), z(100), "shopui", { sel: 0 }])
+  const moveSel = (d) => { ui.sel = (ui.sel + d + choices.length) % choices.length }
+
+  // keyboard: number keys buy directly; arrows/WASD move the cursor; space buys
+  // the highlighted item; enter descends
   onKeyPress("1", () => buy(0))
   onKeyPress("2", () => buy(1))
   onKeyPress("3", () => buy(2))
+  onKeyPress("up", () => moveSel(-1));   onKeyPress("w", () => moveSel(-1))
+  onKeyPress("down", () => moveSel(1));  onKeyPress("s", () => moveSel(1))
+  onKeyPress("space", () => buy(ui.sel))
   onKeyPress("enter", descend)
-  onKeyPress("space", descend)
 
-  const ui = add([fixed(), z(100)])
+  // gamepad: d-pad moves the cursor, A buys, Start/B descends
+  onGamepadButtonPress("dpad-up", () => moveSel(-1))
+  onGamepadButtonPress("dpad-down", () => moveSel(1))
+  onGamepadButtonPress("south", () => buy(ui.sel))
+  onGamepadButtonPress("start", descend)
+  onGamepadButtonPress("east", descend)
+
+  // left stick menu nav, latched so one flick = one step
+  let stickLatched = false
+  onUpdate(() => {
+    const y = getGamepadStick("left").y
+    if (!stickLatched && Math.abs(y) > 0.5) { moveSel(y > 0 ? 1 : -1); stickLatched = true }
+    else if (Math.abs(y) < 0.3) stickLatched = false
+  })
+
   ui.onDraw(() => {
     const W = width(), H = height()
     drawRect({ pos: vec2(0, 0), width: W, height: H, color: rgb(16, 14, 22) })
@@ -132,9 +154,16 @@ scene("upgrade", (level, stats, summary = {}) => {
     choices.forEach((u, i) => {
       const y = top + i * rowH
       const afford = stats.coins >= u.price
+      const selected = i === ui.sel
       const bg = sold[i] ? rgb(26, 40, 30) : (afford ? rgb(32, 30, 44) : rgb(34, 26, 30))
-      const edge = sold[i] ? rgb(70, 120, 80) : (afford ? rgb(90, 82, 120) : rgb(80, 60, 66))
-      drawRect({ pos: vec2(x0, y), width: cardW, height: 52, radius: 6, color: bg, outline: { color: edge, width: 1 } })
+      const edge = selected ? rgb(130, 225, 255)
+        : (sold[i] ? rgb(70, 120, 80) : (afford ? rgb(90, 82, 120) : rgb(80, 60, 66)))
+      drawRect({ pos: vec2(x0, y), width: cardW, height: 52, radius: 6, color: bg,
+        outline: { color: edge, width: selected ? 2 : 1 } })
+      // cursor marker for the highlighted row
+      if (selected) {
+        drawPolygon({ pts: [vec2(x0 - 16, y + 20), vec2(x0 - 16, y + 32), vec2(x0 - 7, y + 26)], color: rgb(130, 225, 255) })
+      }
       drawText({ text: `${i + 1}`, size: 18, pos: vec2(x0 + 20, y + 26), anchor: "center", color: rgb(225, 220, 238) })
       drawText({ text: u.name, size: 15, pos: vec2(x0 + 42, y + 16), anchor: "left", color: rgb(240, 235, 248) })
       drawText({ text: u.desc, size: 11, pos: vec2(x0 + 42, y + 35), anchor: "left", color: rgb(178, 172, 194) })
@@ -147,7 +176,7 @@ scene("upgrade", (level, stats, summary = {}) => {
       }
     })
 
-    drawText({ text: "press 1–3 to buy    ·    ENTER to leave the shop", size: 12,
+    drawText({ text: "move ↕    ·    1–3 / (A) buy    ·    Enter / Start descend", size: 12,
       pos: vec2(W / 2, top + 3 * rowH + 12), anchor: "center", color: rgb(175, 172, 192) })
   })
 })
@@ -232,6 +261,8 @@ scene("play", (level, stats) => {
       drawRect({ pos: vec2(0, 0), width: W, height: height(), color: rgb(10, 9, 14), opacity: 0.4 })
       drawText({ text: `${n}`, size: 72, pos: vec2(W / 2, height() / 2 - 6), anchor: "center", color: rgb(245, 240, 250) })
       drawText({ text: "get ready", size: 14, pos: vec2(W / 2, height() / 2 + 46), anchor: "center", color: rgb(200, 195, 212) })
+      drawText({ text: "move: stick / WASD     ·     attack: A / space", size: 11,
+        pos: vec2(W / 2, height() / 2 + 66), anchor: "center", color: rgb(150, 146, 165) })
     } else if (time() < goUntil) {
       drawText({ text: "GO!", size: 60, pos: vec2(W / 2, height() / 2 - 6), anchor: "center", color: rgb(150, 240, 160), opacity: Math.max(0, (goUntil - time()) / 0.6) })
     }
