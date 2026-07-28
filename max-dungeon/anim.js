@@ -3,8 +3,6 @@
 // left/right we freeze the first walk frame as a stand-in idle (same trick the
 // original player used).
 
-export const ATTACK_FPS = 30
-
 // In-game the attack_left / attack_right art reads inverted, so map the true
 // facing to the sprite that actually swings that way.
 export function attackSprite(facing) {

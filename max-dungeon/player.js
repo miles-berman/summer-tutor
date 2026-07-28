@@ -29,6 +29,7 @@ export function defaultStats() {
     splashDamage: 2,
     splashRadius: 30,
     splashCd: 1.4,     // long: splash is a committed move, not spammable
+    score: 0,          // run score, carried across levels via the stats object
   }
 }
 
@@ -176,7 +177,6 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
       player.charging = false
       player.opacity = 1
       player.show("die", { loop: false, speed: 12, restart: true })
-      debug.log("Player defeated")
       return
     }
     player.action = "hit"
@@ -203,8 +203,6 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     else quickAttack()
   })
 
-  onKeyPress("h", () => player.hurt(1)) // debug
-
   // charge feedback ring — fills as you hold; turns red when a splash is ready.
   // Purely visual: the splash only fires on release (no auto-fire, no hold-spam).
   const chargeFx = add([pos(0, 0), z(48)])
@@ -219,8 +217,10 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     })
   })
 
-  // ---------- per-frame ----------
-  player.onUpdate(() => {
+  // ---------- per-frame movement (fixed 50Hz step) ----------
+  // Running movement on the fixed step means a lag spike is replayed as several
+  // small, wall-collision-checked steps instead of one big teleport — no clipping.
+  player.onFixedUpdate(() => {
     // build charge visual while holding (no auto-fire)
     if (player.spaceDown && !player.dead) {
       if (time() - player.chargeStart >= CHARGE_SHOW) player.charging = true
@@ -255,7 +255,6 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
   })
 
   player.onCollideUpdate("enemy", (e) => player.hurt(e.dmg ?? 1, e.pos))
-  player.onCollide("door", () => debug.log("You found the exit!"))
 
   return player
 }

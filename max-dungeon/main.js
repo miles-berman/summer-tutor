@@ -9,6 +9,11 @@ kaplay({ background: [22, 20, 30], crisp: true })
 
 loadAssets()
 
+// ---- scoring: depth-and-kills, with a persistent best kept in localStorage ----
+const HS_KEY = "maxDungeonHighScore"
+const KILL_POINTS = 10
+const CLEAR_POINTS = 100
+
 // ---- upgrade pool: one of three after each cleared level. Values are modest
 // and capped so nothing (especially speed) spirals out of control. ----
 const UPGRADES = [
@@ -33,12 +38,10 @@ function pickThree() {
 // screen-space health bar: segmented pips that recolor green -> red as HP drops
 function drawHealthBar(player) {
   const x0 = 6, y0 = 24
-  const hpRef = { value: player.hp }
   const bar = add([fixed(), z(100)])
-  bar.onUpdate(() => { hpRef.value = player.hp })
   bar.onDraw(() => {
     const max = player.maxHp
-    const ratio = max > 0 ? hpRef.value / max : 0
+    const ratio = max > 0 ? player.hp / max : 0
     // recolor from green (healthy) through yellow to red (critical)
     const g = Math.round(200 * Math.min(1, ratio * 1.6))
     const r = Math.round(200 * Math.min(1, (1 - ratio) * 1.8))
@@ -52,7 +55,7 @@ function drawHealthBar(player) {
         const x = x0 + i * (pipW + gap)
         drawRect({ pos: vec2(x, y0), width: pipW, height: h, radius: 2,
           color: empty, outline: { color: edge, width: 1 } })
-        if (i < hpRef.value)
+        if (i < player.hp)
           drawRect({ pos: vec2(x, y0), width: pipW, height: h, radius: 2, color: fill })
       }
     } else {
@@ -87,9 +90,19 @@ scene("upgrade", (level, stats) => {
 // ---- one level of play ----
 scene("play", (level, stats) => {
   const s = stats || defaultStats()
+  let best = getData(HS_KEY) ?? 0
+
+  function addScore(n) {
+    s.score += n
+    if (s.score > best) {
+      best = s.score
+      setData(HS_KEY, best)
+    }
+  }
+
   const { spawn, enemySpawns, cols, rows, openDoor, isWallAt } = buildLevel(level)
   const player = makePlayer(spawn, s, isWallAt)
-  enemySpawns.forEach((p) => spawnEnemy(p, level))
+  enemySpawns.forEach((p) => spawnEnemy(p, level, () => addScore(KILL_POINTS)))
 
   let doorOpen = false
   let ended = false
@@ -110,8 +123,8 @@ scene("play", (level, stats) => {
     }
 
     info.text = player.dead
-      ? `LEVEL ${level}   —  YOU DIED`
-      : `LEVEL ${level}      ENEMIES ${alive}`
+      ? `LEVEL ${level}   —  YOU DIED      SCORE ${s.score}    BEST ${best}`
+      : `LEVEL ${level}      ENEMIES ${alive}      SCORE ${s.score}    BEST ${best}`
 
     if (player.dead && !ended) {
       ended = true
@@ -120,17 +133,18 @@ scene("play", (level, stats) => {
     }
   })
 
-  // reach the exit -> upgrade screen -> next (harder) level
+  // reach the exit -> score the clear -> upgrade screen -> next (harder) level
   player.onCollide("door", () => {
     if (ended) return
     ended = true
+    addScore(CLEAR_POINTS)
     go("upgrade", level, s)
   })
 
   const w = cols * TILE
   const h = rows * TILE
-  camScale(Math.min(width() / w, height() / h))
-  camPos(w / 2, h / 2)
+  setCamScale(Math.min(width() / w, height() / h))
+  setCamPos(w / 2, h / 2)
 })
 
 go("play", 1, defaultStats())
