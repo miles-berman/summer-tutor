@@ -27,7 +27,8 @@ function reachableFrom(grid, sc, sr) {
 
 // Build one random room. Returns the grid plus spawn/door/enemy cells,
 // guaranteed traversable (player can reach the door and every enemy).
-function generate(level) {
+// Boss rooms are open arenas (no wall clusters) so the giant has room to roam.
+function generate(level, boss = false) {
   for (let attempt = 0; attempt < 60; attempt++) {
     // start: floor interior, solid border
     const grid = []
@@ -44,15 +45,18 @@ function generate(level) {
     const doorCol = 2 + Math.floor(Math.random() * (COLS - 4))
     grid[0][doorCol] = "X"
 
-    // scatter wall clusters (more, and larger, as levels climb)
-    const clusters = 4 + Math.min(level, 8)
-    for (let i = 0; i < clusters; i++) {
-      const w = 1 + Math.floor(Math.random() * 3)
-      const h = 1 + Math.floor(Math.random() * 3)
-      const c0 = 2 + Math.floor(Math.random() * (COLS - 4 - w))
-      const r0 = 3 + Math.floor(Math.random() * (ROWS - 6 - h))
-      for (let r = r0; r < r0 + h; r++)
-        for (let c = c0; c < c0 + w; c++) grid[r][c] = "#"
+    // scatter wall clusters (more, and larger, as levels climb) — skipped for
+    // boss arenas, which stay open.
+    if (!boss) {
+      const clusters = 4 + Math.min(level, 8)
+      for (let i = 0; i < clusters; i++) {
+        const w = 1 + Math.floor(Math.random() * 3)
+        const h = 1 + Math.floor(Math.random() * 3)
+        const c0 = 2 + Math.floor(Math.random() * (COLS - 4 - w))
+        const r0 = 3 + Math.floor(Math.random() * (ROWS - 6 - h))
+        for (let r = r0; r < r0 + h; r++)
+          for (let c = c0; c < c0 + w; c++) grid[r][c] = "#"
+      }
     }
 
     // keep the cell directly under the door walkable
@@ -65,6 +69,12 @@ function generate(level) {
     // must be able to reach the door's approach cell
     const reach = reachableFrom(grid, spawnCell.c, spawnCell.r)
     if (!reach.has(key(doorCol, 1))) continue
+
+    // boss arena: one giant near the top-center, no regular mobs
+    if (boss) {
+      const bossCell = { c: Math.floor(COLS / 2), r: 3 }
+      return { grid, spawnCell, doorCol, enemyCells: [], bossCell }
+    }
 
     // pick enemy spawns from reachable floor, away from the player & door
     const candidates = []
@@ -84,7 +94,7 @@ function generate(level) {
     }
     const enemyCells = candidates.slice(0, enemyCount)
 
-    return { grid, spawnCell, doorCol, enemyCells }
+    return { grid, spawnCell, doorCol, enemyCells, bossCell: null }
   }
 
   // fallback: empty room if generation kept failing
@@ -99,16 +109,18 @@ function generate(level) {
   }
   const doorCol = Math.floor(COLS / 2)
   grid[0][doorCol] = "X"
+  const spawnCell = { c: Math.floor(COLS / 2), r: ROWS - 2 }
   return {
     grid,
-    spawnCell: { c: Math.floor(COLS / 2), r: ROWS - 2 },
+    spawnCell,
     doorCol,
-    enemyCells: [{ c: 4, r: 3 }, { c: COLS - 5, r: 3 }],
+    enemyCells: boss ? [] : [{ c: 4, r: 3 }, { c: COLS - 5, r: 3 }],
+    bossCell: boss ? { c: Math.floor(COLS / 2), r: 3 } : null,
   }
 }
 
-export function buildLevel(level = 1) {
-  const { grid, spawnCell, doorCol, enemyCells } = generate(level)
+export function buildLevel(level = 1, { boss = false } = {}) {
+  const { grid, spawnCell, doorCol, enemyCells, bossCell } = generate(level, boss)
 
   addLevel(grid.map((row) => row.join("")), {
     tileWidth: TILE,
@@ -155,6 +167,8 @@ export function buildLevel(level = 1) {
   return {
     spawn: cellCenter(spawnCell.c, spawnCell.r),
     enemySpawns: enemyCells.map((e) => cellCenter(e.c, e.r)),
+    bossSpawn: bossCell ? cellCenter(bossCell.c, bossCell.r) : null,
+    isBoss: boss,
     cols: COLS,
     rows: ROWS,
     openDoor,

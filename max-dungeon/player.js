@@ -30,10 +30,11 @@ export function defaultStats() {
     splashRadius: 30,
     splashCd: 1.4,     // long: splash is a committed move, not spammable
     score: 0,          // run score, carried across levels via the stats object
+    coins: 0,          // spendable currency, carried across levels
   }
 }
 
-export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false) {
+export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false, isActive = () => true) {
   const player = add([
     sprite("idle_down", { anim: "main" }),
     anchor("center"),
@@ -53,6 +54,7 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
       maxHp: stats.maxHp,
       kb: vec2(0),
       invuln: 0,
+      stunUntil: 0,        // time() until which movement/attacks are blocked
       charging: false,
       chargeStart: 0,
       spaceDown: false,
@@ -184,10 +186,22 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     player.show("hit", { loop: false, speed: 10, restart: true })
   }
 
+  // ---------- stun (from the boss's pot) ----------
+  // Freezes movement and attacks for a few seconds. Doesn't grant i-frames, so
+  // a stunned player is a sitting duck — dodge the pot or pay for it.
+  player.isStunned = () => !player.dead && time() < player.stunUntil
+  player.stun = (dur = 1.5) => {
+    if (player.dead) return
+    player.stunUntil = Math.max(player.stunUntil, time() + dur)
+    player.action = null
+    player.charging = false
+    player.spaceDown = false
+  }
+
   // ---------- input ----------
   // Tap or short hold = jab (spammable). Hold to full charge, then release = splash.
   onKeyPress("space", () => {
-    if (player.dead) return
+    if (player.dead || player.isStunned() || !isActive()) return
     player.spaceDown = true
     player.chargeStart = time()
     player.charging = false
@@ -197,7 +211,7 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     if (!player.spaceDown) return
     player.spaceDown = false
     player.charging = false
-    if (player.dead) return
+    if (player.dead || player.isStunned()) return
     const held = time() - player.chargeStart
     if (held >= FULL_CHARGE) splashAttack()
     else quickAttack()
@@ -217,12 +231,32 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     })
   })
 
+  // dazed stars orbiting overhead while stunned
+  const stunFx = add([pos(0, 0), z(51)])
+  stunFx.onDraw(() => {
+    if (!player.isStunned()) return
+    const cx = player.pos.x, cy = player.pos.y - 16
+    for (let i = 0; i < 3; i++) {
+      const a = time() * 4 + i * (Math.PI * 2 / 3)
+      drawCircle({
+        pos: vec2(cx + Math.cos(a) * 9, cy + Math.sin(a) * 3),
+        radius: 2.2, color: rgb(255, 230, 120),
+      })
+    }
+  })
+
   // ---------- per-frame movement (fixed 50Hz step) ----------
   // Running movement on the fixed step means a lag spike is replayed as several
   // small, wall-collision-checked steps instead of one big teleport — no clipping.
   player.onFixedUpdate(() => {
-    // build charge visual while holding (no auto-fire)
-    if (player.spaceDown && !player.dead) {
+    // pre-level countdown: frozen, no input, no attacks
+    if (!isActive()) {
+      player.showIdle(player.facing)
+      return
+    }
+
+    // build charge visual while holding (no auto-fire; not while stunned)
+    if (player.spaceDown && !player.dead && !player.isStunned()) {
       if (time() - player.chargeStart >= CHARGE_SHOW) player.charging = true
     }
 
@@ -236,13 +270,22 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     // clear timed action locks
     if (player.action && time() >= player.actionUntil) player.action = null
 
-    // knockback (built-in body() handles wall collision)
+    // knockback (built-in body() handles wall collision) — still shoves a
+    // stunned player, they just can't act under their own power
     if (player.kb.len() > 4) {
       player.move(player.kb)
       player.kb = player.kb.scale(0.82)
     }
 
-    if (player.dead || player.action) return
+    if (player.dead) return
+
+    // stunned: frozen in place, no input, no attacks
+    if (player.isStunned()) {
+      player.showIdle(player.facing)
+      return
+    }
+
+    if (player.action) return
 
     const { dx, dy, moving, facing } = readInput()
     player.facing = facing

@@ -8,6 +8,10 @@ function frames(name, count) {
 export function loadAssets() {
   loadSprite("tiles", "sprites/tiles.png", { sliceX: 18, sliceY: 7 })
 
+  // the pot the giant hurls — its own sprite so it doesn't depend on a
+  // tilesheet frame index (the sheet's bottom-left cell is actually empty).
+  loadSprite("pot", "sprites/pot.png")
+
   // idle — only down + up exist. 320x49 strip = 5 frames @ 64x49
   for (const dir of ["down", "up"]) {
     loadSprite(`idle_${dir}`, `${BASE}/atlas/idle_${dir}.png`, {
