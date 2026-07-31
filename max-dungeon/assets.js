@@ -12,6 +12,15 @@ export function loadAssets() {
   // tilesheet frame index (the sheet's bottom-left cell is actually empty).
   loadSprite("pot", "sprites/pot.png")
 
+  // custom upgrade icons (pixel art). Each upgrade references one by name.
+  loadSprite("upg_boot", "sprites/upg_boot.png")
+  loadSprite("upg_blade", "sprites/upg_blade.png")
+  loadSprite("upg_heart", "sprites/upg_heart.png")
+  loadSprite("upg_sharpsplash", "sprites/upg_sharpsplash.png")
+  loadSprite("upg_bigsplash", "sprites/upg_bigsplash.png")
+  loadSprite("upg_clock", "sprites/upg_clock.png")
+  loadSprite("upg_hands", "sprites/upg_hands.png")
+
   // idle — only down + up exist. 320x49 strip = 5 frames @ 64x49
   for (const dir of ["down", "up"]) {
     loadSprite(`idle_${dir}`, `${BASE}/atlas/idle_${dir}.png`, {

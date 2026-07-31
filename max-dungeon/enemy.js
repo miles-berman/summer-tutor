@@ -95,11 +95,11 @@ function spawnShatter(at) {
 // `opts`: { onKill, boss, isWallAt }. A boss is a giant, slower, tankier mob
 // that shares this AI but can also lob pots.
 export function spawnEnemy(p, level = 1, opts = {}) {
-  const { onKill = null, boss = false, isWallAt = () => false, isActive = () => true } = opts
+  const { onKill = null, boss = false, isWallAt = () => false, isActive = () => true, critter = false } = opts
 
   const baseSpeed = Math.min(ENEMY_SPEED + (level - 1) * 3, 92)
   const hp = boss ? BOSS_HP(level) : ENEMY_HP + Math.floor(level * 0.75)
-  const speed = boss ? Math.round(baseSpeed * BOSS_SPEED_MULT) : baseSpeed
+  const speed = critter ? 40 : boss ? Math.round(baseSpeed * BOSS_SPEED_MULT) : baseSpeed
   const dmg = 1 + Math.floor((level - 1) / 4) + (boss ? BOSS_MELEE_BONUS : 0)
   const atkCd = Math.max(0.55, ENEMY_ATTACK_CD - (level - 1) * 0.04)
   const knockback = boss ? BOSS_KNOCKBACK : ENEMY_KNOCKBACK
@@ -116,10 +116,12 @@ export function spawnEnemy(p, level = 1, opts = {}) {
     pos(p),
     area({ shape: areaShape }),
     body(boss ? { mass: BOSS_MASS } : {}),
-    "enemy",
-    boss ? "boss" : "mob",
+    ...(critter ? ["critter"] : ["enemy", boss ? "boss" : "mob"]),
     {
       isBoss: boss,
+      critter,
+      wanderDir: vec2(0),
+      wanderUntil: 0,
       dmg,
       speed,
       hp,
@@ -197,6 +199,23 @@ export function spawnEnemy(p, level = 1, opts = {}) {
     // pre-level countdown: hold position, don't tick cooldowns
     if (!isActive()) {
       e.showIdle(e.facing)
+      return
+    }
+
+    // critters just amble around aimlessly and never attack or chase
+    if (e.critter) {
+      if (time() >= e.wanderUntil) {
+        const ang = Math.random() * Math.PI * 2
+        e.wanderDir = Math.random() < 0.25 ? vec2(0) : vec2(Math.cos(ang), Math.sin(ang))
+        e.wanderUntil = time() + 0.6 + Math.random() * 1.6
+      }
+      if (e.wanderDir.len() > 0) {
+        e.move(e.wanderDir.scale(e.speed))
+        e.facing = facingFromVec(e.wanderDir.x, e.wanderDir.y, e.facing)
+        e.showWalk(e.facing)
+      } else {
+        e.showIdle(e.facing)
+      }
       return
     }
 

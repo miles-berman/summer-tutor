@@ -11,6 +11,8 @@ loadAssets()
 
 // ---- scoring: depth-and-kills, with a persistent best kept in localStorage ----
 const HS_KEY = "maxDungeonHighScore"
+const BEST_LEVEL_KEY = "maxDungeonBestLevel"  // highest level ever reached
+const RUNS_KEY = "maxDungeonRuns"             // total runs played (deaths)
 const KILL_POINTS = 10
 const CLEAR_POINTS = 100
 const BOSS_POINTS = 300
@@ -29,15 +31,17 @@ const COUNTDOWN = 3        // "3 / 2 / 1 / GO" before a level's timer starts
 const isBossLevel = (level) => level % 5 === 0
 
 // ---- shop pool: three offered after each level, bought with coins. Values are
-// modest and capped so nothing (especially speed) spirals out of control. ----
+// modest and capped so nothing (especially speed) spirals out of control.
+// `icon` is the sprite name for the card art — all share upg_boot for now; give
+// an upgrade its own by loading a sprite in assets.js and changing its icon. ----
 const UPGRADES = [
-  { name: "Vitality",        desc: "+2 max HP",               price: 12, apply: (s) => { s.maxHp += 2 } },
-  { name: "Sharpened Blade", desc: "+1 jab damage",           price: 15, apply: (s) => { s.quickDamage += 1 } },
-  { name: "Heavy Splash",    desc: "+1 splash damage",        price: 15, apply: (s) => { s.splashDamage += 1 } },
-  { name: "Wide Splash",     desc: "+6 splash radius",        price: 10, apply: (s) => { s.splashRadius = Math.min(56, s.splashRadius + 6) } },
-  { name: "Swift Feet",      desc: "+6 move speed",           price: 12, apply: (s) => { s.speed = Math.min(126, s.speed + 6) } },
-  { name: "Quick Hands",     desc: "faster jabs",             price: 14, apply: (s) => { s.quickCd = Math.max(0.09, s.quickCd - 0.015) } },
-  { name: "Splash Recovery", desc: "shorter splash cooldown", price: 12, apply: (s) => { s.splashCd = Math.max(0.9, s.splashCd - 0.15) } },
+  { name: "Vitality",        desc: "+2 max HP",               price: 12, icon: "upg_heart", apply: (s) => { s.maxHp += 2 } },
+  { name: "Sharpened Blade", desc: "+1 jab damage",           price: 15, icon: "upg_blade", apply: (s) => { s.quickDamage += 1 } },
+  { name: "Heavy Splash",    desc: "+1 splash damage",        price: 15, icon: "upg_sharpsplash", apply: (s) => { s.splashDamage += 1 } },
+  { name: "Wide Splash",     desc: "+6 splash radius",        price: 10, icon: "upg_bigsplash", apply: (s) => { s.splashRadius = Math.min(56, s.splashRadius + 6) } },
+  { name: "Swift Feet",      desc: "+6 move speed",           price: 12, icon: "upg_boot", apply: (s) => { s.speed = Math.min(126, s.speed + 6) } },
+  { name: "Quick Hands",     desc: "faster jabs",             price: 14, icon: "upg_hands", apply: (s) => { s.quickCd = Math.max(0.09, s.quickCd - 0.015) } },
+  { name: "Splash Recovery", desc: "shorter splash cooldown", price: 12, icon: "upg_clock", apply: (s) => { s.splashCd = Math.max(0.9, s.splashCd - 0.15) } },
 ]
 
 function pickThree() {
@@ -164,9 +168,11 @@ scene("upgrade", (level, stats, summary = {}) => {
       if (selected) {
         drawPolygon({ pts: [vec2(x0 - 16, y + 20), vec2(x0 - 16, y + 32), vec2(x0 - 7, y + 26)], color: rgb(130, 225, 255) })
       }
-      drawText({ text: `${i + 1}`, size: 18, pos: vec2(x0 + 20, y + 26), anchor: "center", color: rgb(225, 220, 238) })
-      drawText({ text: u.name, size: 15, pos: vec2(x0 + 42, y + 16), anchor: "left", color: rgb(240, 235, 248) })
-      drawText({ text: u.desc, size: 11, pos: vec2(x0 + 42, y + 35), anchor: "left", color: rgb(178, 172, 194) })
+      drawText({ text: `${i + 1}`, size: 16, pos: vec2(x0 + 16, y + 26), anchor: "center", color: rgb(225, 220, 238) })
+      // custom pixel-art icon
+      drawSprite({ sprite: u.icon, pos: vec2(x0 + 52, y + 26), width: 40, height: 40, anchor: "center" })
+      drawText({ text: u.name, size: 15, pos: vec2(x0 + 80, y + 16), anchor: "left", color: rgb(240, 235, 248) })
+      drawText({ text: u.desc, size: 11, pos: vec2(x0 + 80, y + 35), anchor: "left", color: rgb(178, 172, 194) })
       if (sold[i]) {
         drawText({ text: "SOLD", size: 14, pos: vec2(x0 + cardW - 22, y + 26), anchor: "right", color: rgb(140, 225, 160) })
       } else {
@@ -182,9 +188,13 @@ scene("upgrade", (level, stats, summary = {}) => {
 })
 
 // ---- one level of play ----
-scene("play", (level, stats) => {
+scene("play", (level, stats, opts = {}) => {
   const s = stats || defaultStats()
+  const secret = !!opts.secret
   let best = getData(HS_KEY) ?? 0
+
+  // track the deepest level ever reached
+  if (level > (getData(BEST_LEVEL_KEY) ?? 0)) setData(BEST_LEVEL_KEY, level)
 
   function addScore(n) {
     s.score += n
@@ -202,11 +212,36 @@ scene("play", (level, stats) => {
   let goUntil = 0
   const isActive = () => running
 
-  const boss = isBossLevel(level)
-  const { spawn, enemySpawns, bossSpawn, cols, rows, openDoor, isWallAt } = buildLevel(level, { boss })
-  const player = makePlayer(spawn, s, isWallAt, isActive)
+  let doorOpen = false
+  let ended = false
 
-  if (boss) {
+  // easter egg: on level 6, once the room is cleared, mashing attack 6x quickly
+  // (each within 1s) opens a secret room
+  let combo = 0
+  let lastAttackAt = 0
+  const onAttack = () => {
+    const now = time()
+    combo = now - lastAttackAt < 1 ? combo + 1 : 1
+    lastAttackAt = now
+    if (!secret && level === 6 && combo >= 6 && !ended &&
+        get("enemy").filter((e) => !e.dead).length === 0) {
+      ended = true
+      go("play", 6, s, { secret: true })
+    }
+  }
+
+  const boss = isBossLevel(level)
+  const { spawn, enemySpawns, bossSpawn, critterSpawns, cols, rows, openDoor, isWallAt } =
+    buildLevel(level, { boss, secret })
+  const player = makePlayer(spawn, s, isWallAt, isActive, onAttack)
+
+  if (secret) {
+    const bossObj = spawnEnemy(bossSpawn, level, {
+      onKill: () => { addScore(BOSS_POINTS); addCoins(BOSS_COINS) }, boss: true, isWallAt, isActive,
+    })
+    drawBossBar(bossObj)
+    critterSpawns.forEach((p) => spawnEnemy(p, level, { critter: true, isActive }))
+  } else if (boss) {
     const bossObj = spawnEnemy(bossSpawn, level, {
       onKill: () => { addScore(BOSS_POINTS); addCoins(BOSS_COINS) }, boss: true, isWallAt, isActive,
     })
@@ -217,11 +252,9 @@ scene("play", (level, stats) => {
     }))
   }
 
-  let doorOpen = false
-  let ended = false
-
   const banner = add([text("", { size: 15 }), pos(width() / 2, 42), anchor("top"), fixed(), z(100)])
-  if (boss) banner.text = "A giant guards the exit!"
+  if (secret) banner.text = "✨ a secret room ✨"
+  else if (boss) banner.text = "A giant guards the exit!"
 
   // ---------- HUD ----------
   const hud = add([fixed(), z(100)])
@@ -245,7 +278,7 @@ scene("play", (level, stats) => {
     // center: level · timer · enemies
     const alive = get("enemy").filter((e) => !e.dead).length
     const tsec = running ? time() - levelStartAt : 0
-    const midLabel = boss ? "BOSS" : `${alive} left`
+    const midLabel = (boss || secret) ? "BOSS" : `${alive} left`
     drawText({ text: `LV ${level}    ·    ${fmtTime(tsec)}    ·    ${midLabel}`,
       size: 13, pos: vec2(W / 2, 15), anchor: "center", color: rgb(232, 228, 242) })
 
@@ -285,8 +318,9 @@ scene("play", (level, stats) => {
 
     if (player.dead && !ended) {
       ended = true
-      banner.text = "You died — restarting run..."
-      wait(1.5, () => go("play", 1, defaultStats()))
+      banner.text = "You died..."
+      setData(RUNS_KEY, (getData(RUNS_KEY) ?? 0) + 1)  // count this run
+      wait(1.2, () => go("gameover", level, s.score))
     }
   })
 
@@ -306,6 +340,35 @@ scene("play", (level, stats) => {
   const h = rows * TILE
   setCamScale(Math.min(width() / w, height() / h))
   setCamPos(w / 2, h / 2)
+})
+
+// ---- game over: this run's result + lifetime stats, restart on a key ----
+scene("gameover", (level, score) => {
+  const bestLevel = getData(BEST_LEVEL_KEY) ?? 0
+  const best = getData(HS_KEY) ?? 0
+  const runs = getData(RUNS_KEY) ?? 0
+  const restart = () => go("play", 1, defaultStats())
+  onKeyPress("space", restart)
+  onKeyPress("enter", restart)
+  onGamepadButtonPress("south", restart)
+  onGamepadButtonPress("start", restart)
+
+  const ui = add([fixed(), z(100)])
+  ui.onDraw(() => {
+    const W = width(), H = height(), cx = W / 2
+    drawRect({ pos: vec2(0, 0), width: W, height: H, color: rgb(16, 14, 22) })
+    drawText({ text: "GAME OVER", size: 34, pos: vec2(cx, H / 2 - 120), anchor: "center", color: rgb(240, 120, 130) })
+    drawText({ text: `You reached Level ${level}`, size: 17, pos: vec2(cx, H / 2 - 74), anchor: "center", color: rgb(232, 228, 242) })
+    drawText({ text: `Score  ${score}`, size: 13, pos: vec2(cx, H / 2 - 50), anchor: "center", color: rgb(200, 196, 214) })
+
+    // lifetime stats
+    drawText({ text: "— lifetime —", size: 11, pos: vec2(cx, H / 2 - 8), anchor: "center", color: rgb(140, 138, 156) })
+    drawText({ text: `Highest Level   ${bestLevel}`, size: 15, pos: vec2(cx, H / 2 + 18), anchor: "center", color: rgb(245, 215, 90) })
+    drawText({ text: `High Score   ${best}`, size: 15, pos: vec2(cx, H / 2 + 42), anchor: "center", color: rgb(245, 215, 90) })
+    drawText({ text: `Runs Played   ${runs}`, size: 15, pos: vec2(cx, H / 2 + 66), anchor: "center", color: rgb(200, 196, 214) })
+
+    drawText({ text: "press Space / A to try again", size: 12, pos: vec2(cx, H / 2 + 112), anchor: "center", color: rgb(175, 172, 192) })
+  })
 })
 
 go("play", 1, defaultStats())

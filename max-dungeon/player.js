@@ -28,7 +28,7 @@ export function defaultStats() {
     speed: 90,
     quickDamage: 1,
     quickCd: 0.14,     // min time between jabs (lower = faster)
-    splashDamage: 2,
+    splashDamage: 4,
     splashRadius: 30,
     splashCd: 1.4,     // long: splash is a committed move, not spammable
     score: 0,          // run score, carried across levels via the stats object
@@ -36,7 +36,7 @@ export function defaultStats() {
   }
 }
 
-export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false, isActive = () => true) {
+export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false, isActive = () => true, onAttack = () => {}) {
   const player = add([
     sprite("idle_down", { anim: "main" }),
     anchor("center"),
@@ -231,6 +231,7 @@ export function makePlayer(spawn, stats = defaultStats(), isWallAt = () => false
     const held = time() - player.chargeStart
     if (held >= FULL_CHARGE) splashAttack()
     else quickAttack()
+    onAttack()
   }
 
   onKeyPress("space", beginAttack)

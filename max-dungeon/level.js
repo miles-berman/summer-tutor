@@ -3,6 +3,22 @@ import { TILE, TILES } from "./constants.js"
 const COLS = 20
 const ROWS = 13
 
+// ---- tilesheet dressing (frames on the 18x7 "tiles" sheet) ----
+// These add ground variety beyond plain floor/wall. They were picked by
+// analyzing the sheet (alpha coverage + pixel position), not by eye, so if any
+// frame looks wrong in-game just add/remove indices here — they're purely
+// cosmetic and never block movement.
+//
+// Floor variants: near-identical flat floor tiles, mixed in so the ground isn't
+// one repeated texture. TILES.FLOOR is weighted heavily so variants stay subtle.
+const FLOOR_FRAMES = [TILES.FLOOR, TILES.FLOOR, TILES.FLOOR, TILES.FLOOR, TILES.FLOOR, 116, 98, 113]
+// Decorations: small transparent-background props (bones/rubble/cracks/etc.)
+// that sit ON a floor cell. All are bottom-heavy/centered ground objects.
+const DECOR_FRAMES = [100, 102, 103, 104, 105, 119, 123]
+const DECOR_CHANCE = 0.09  // fraction of eligible floor cells that get a prop
+
+const pickFloor = () => FLOOR_FRAMES[Math.floor(Math.random() * FLOOR_FRAMES.length)]
+
 const cellCenter = (c, r) => vec2(c * TILE + TILE / 2, r * TILE + TILE / 2)
 const key = (c, r) => `${c},${r}`
 
@@ -28,7 +44,8 @@ function reachableFrom(grid, sc, sr) {
 // Build one random room. Returns the grid plus spawn/door/enemy cells,
 // guaranteed traversable (player can reach the door and every enemy).
 // Boss rooms are open arenas (no wall clusters) so the giant has room to roam.
-function generate(level, boss = false) {
+function generate(level, boss = false, secret = false) {
+  const open = boss || secret  // open arena (no wall clusters)
   for (let attempt = 0; attempt < 60; attempt++) {
     // start: floor interior, solid border
     const grid = []
@@ -47,7 +64,7 @@ function generate(level, boss = false) {
 
     // scatter wall clusters (more, and larger, as levels climb) — skipped for
     // boss arenas, which stay open.
-    if (!boss) {
+    if (!open) {
       const clusters = 4 + Math.min(level, 8)
       for (let i = 0; i < clusters; i++) {
         const w = 1 + Math.floor(Math.random() * 3)
@@ -70,10 +87,28 @@ function generate(level, boss = false) {
     const reach = reachableFrom(grid, spawnCell.c, spawnCell.r)
     if (!reach.has(key(doorCol, 1))) continue
 
+    // secret easter-egg room: one boss plus a handful of aimless critters
+    if (secret) {
+      const bossCell = { c: Math.floor(COLS / 2), r: 3 }
+      const critterCells = []
+      for (const k of reach) {
+        const [c, r] = k.split(",").map(Number)
+        if (r <= 1) continue
+        if (Math.abs(c - spawnCell.c) + Math.abs(r - spawnCell.r) < 3) continue
+        if (Math.abs(c - bossCell.c) + Math.abs(r - bossCell.r) < 2) continue
+        critterCells.push({ c, r })
+      }
+      for (let i = critterCells.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[critterCells[i], critterCells[j]] = [critterCells[j], critterCells[i]]
+      }
+      return { grid, spawnCell, doorCol, enemyCells: [], bossCell, critterCells: critterCells.slice(0, 7) }
+    }
+
     // boss arena: one giant near the top-center, no regular mobs
     if (boss) {
       const bossCell = { c: Math.floor(COLS / 2), r: 3 }
-      return { grid, spawnCell, doorCol, enemyCells: [], bossCell }
+      return { grid, spawnCell, doorCol, enemyCells: [], bossCell, critterCells: [] }
     }
 
     // pick enemy spawns from reachable floor, away from the player & door
@@ -94,7 +129,7 @@ function generate(level, boss = false) {
     }
     const enemyCells = candidates.slice(0, enemyCount)
 
-    return { grid, spawnCell, doorCol, enemyCells, bossCell: null }
+    return { grid, spawnCell, doorCol, enemyCells, bossCell: null, critterCells: [] }
   }
 
   // fallback: empty room if generation kept failing
@@ -114,19 +149,20 @@ function generate(level, boss = false) {
     grid,
     spawnCell,
     doorCol,
-    enemyCells: boss ? [] : [{ c: 4, r: 3 }, { c: COLS - 5, r: 3 }],
-    bossCell: boss ? { c: Math.floor(COLS / 2), r: 3 } : null,
+    enemyCells: (boss || secret) ? [] : [{ c: 4, r: 3 }, { c: COLS - 5, r: 3 }],
+    bossCell: (boss || secret) ? { c: Math.floor(COLS / 2), r: 3 } : null,
+    critterCells: secret ? [{ c: 4, r: 4 }, { c: COLS - 5, r: 4 }, { c: 6, r: 8 }] : [],
   }
 }
 
-export function buildLevel(level = 1, { boss = false } = {}) {
-  const { grid, spawnCell, doorCol, enemyCells, bossCell } = generate(level, boss)
+export function buildLevel(level = 1, { boss = false, secret = false } = {}) {
+  const { grid, spawnCell, doorCol, enemyCells, bossCell, critterCells } = generate(level, boss, secret)
 
   addLevel(grid.map((row) => row.join("")), {
     tileWidth: TILE,
     tileHeight: TILE,
     tiles: {
-      ".": () => [sprite("tiles", { frame: TILES.FLOOR })],
+      ".": () => [sprite("tiles", { frame: pickFloor() })],
       "#": () => [
         sprite("tiles", { frame: TILES.WALL }),
         area(),
@@ -143,6 +179,26 @@ export function buildLevel(level = 1, { boss = false } = {}) {
       ],
     },
   })
+
+  // Scatter cosmetic props on floor cells for a more lived-in look. These are
+  // plain sprites (no area/body) placed exactly over a cell, so they align with
+  // the grid and never affect movement or line-of-sight. Added here — after the
+  // floor, before the player is spawned — so they layer above ground, below
+  // actors. Kept clear of the spawn and the exit approach.
+  for (let r = 2; r < ROWS - 1; r++) {
+    for (let c = 1; c < COLS - 1; c++) {
+      if (grid[r][c] !== ".") continue
+      if (Math.abs(c - spawnCell.c) + Math.abs(r - spawnCell.r) < 3) continue
+      if (Math.abs(c - doorCol) + Math.abs(r - 1) < 3) continue
+      if (Math.random() >= DECOR_CHANCE) continue
+      add([
+        sprite("tiles", { frame: DECOR_FRAMES[Math.floor(Math.random() * DECOR_FRAMES.length)] }),
+        pos(c * TILE, r * TILE),
+        z(0),
+        "decor",
+      ])
+    }
+  }
 
   // reveal the exit: remove the sealed wall, drop in a walkable door
   function openDoor() {
@@ -168,6 +224,7 @@ export function buildLevel(level = 1, { boss = false } = {}) {
     spawn: cellCenter(spawnCell.c, spawnCell.r),
     enemySpawns: enemyCells.map((e) => cellCenter(e.c, e.r)),
     bossSpawn: bossCell ? cellCenter(bossCell.c, bossCell.r) : null,
+    critterSpawns: (critterCells || []).map((e) => cellCenter(e.c, e.r)),
     isBoss: boss,
     cols: COLS,
     rows: ROWS,
